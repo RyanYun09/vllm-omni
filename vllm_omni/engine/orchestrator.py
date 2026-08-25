@@ -2344,24 +2344,16 @@ class Orchestrator:
                     operation="async-chunk prewarm",
                 )
             else:
-                import copy
-
-                from vllm_omni.distributed.omni_connectors.adapter import compute_talker_prompt_ids_length
-
-                try:
-                    next_prompt_len = max(1, compute_talker_prompt_ids_length(prompt_token_ids))
-                except Exception:
-                    next_prompt_len = max(1, len(prompt_token_ids))
-
-                original_prompt = req_state.prompt
-                if isinstance(original_prompt, dict):
-                    base_input = copy.deepcopy(original_prompt)
-                else:
-                    base_input = {}
-
-                base_input["prompt_token_ids"] = [0] * next_prompt_len
-                base_input["multi_modal_data"] = None
-                base_input["mm_processor_kwargs"] = None
+                # RFC #4872 P8b: build the prewarm placeholder through the
+                # registered placeholder builder's ``build_prewarm_placeholder``
+                # (resolved from ``sync_process_input_func``), falling back to
+                # the legacy inline estimate when no builder is available.
+                base_input = self._build_prewarm_placeholder_input(
+                    next_stage_id,
+                    request_id,
+                    prompt_token_ids,
+                    req_state,
+                )
                 downstream_resumable = bool(getattr(stage0_request, "resumable", req_state.streaming.enabled))
                 request = build_engine_core_request_from_tokens(
                     request_id=request_id,
@@ -2413,6 +2405,146 @@ class Orchestrator:
             )
 
         return True
+
+    def _get_prewarm_placeholder_builder(self, stage_id: int) -> Any:
+        """Resolve the registered ``build_prewarm_placeholder`` for a stage.
+
+        RFC #4872 P8b: the async-chunk prewarm reuses ``sync_process_input_func``
+        (the ``*_token_only`` path).  Resolution order:
+
+        1. ``client.sync_process_input_func`` -> ``resolve_processor(...).fn``
+           and read ``build_prewarm_placeholder`` off the resolved function
+           (with a module-level sibling fallback).
+        2. The already-resolved ``custom_process_input_func`` fn carrying the
+           attribute (some models install the forward processor directly).
+
+        Returns ``None`` when no builder is available so the caller keeps the
+        legacy inline estimate.  The lookup is deliberately defensive — it never
+        raises (fake pools / minimal stage clients in tests and future
+        connectors may not expose ``stage_client``), so the prewarm path cannot
+        regress on builder resolution.
+        """
+        from vllm_omni.model_executor.stage_input_processors import resolve_processor
+
+        try:
+            pool = self.stage_pools[stage_id]
+            client = getattr(pool, "stage_client", None)
+            if client is None:
+                return None
+
+            path = getattr(client, "sync_process_input_func", None)
+            if path:
+                try:
+                    spec = resolve_processor(path, expected_kind=None)
+                    builder = getattr(spec.fn, "build_prewarm_placeholder", None)
+                    if not callable(builder):
+                        # Module-level sibling (covers paths whose fn does not
+                        # expose the attribute directly).
+                        import importlib
+
+                        module = importlib.import_module(path.rsplit(".", 1)[0])
+                        builder = getattr(module, "build_prewarm_placeholder", None)
+                    if callable(builder):
+                        return builder
+                    logger.warning(
+                        "[Orchestrator] stage-%s sync_process_input_func=%r has no "
+                        "build_prewarm_placeholder; using the inline estimate",
+                        stage_id,
+                        path,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[Orchestrator] failed to resolve build_prewarm_placeholder "
+                        "for %r (stage-%s); using the inline estimate: %s",
+                        path,
+                        stage_id,
+                        exc,
+                    )
+
+            fn = getattr(client, "custom_process_input_func", None)
+            if callable(fn):
+                builder = getattr(fn, "build_prewarm_placeholder", None)
+                if callable(builder):
+                    return builder
+        except Exception as exc:  # pragma: no cover - defensive only
+            logger.warning(
+                "[Orchestrator] prewarm placeholder builder lookup for stage-%s "
+                "failed; using the inline estimate: %s",
+                stage_id,
+                exc,
+            )
+        return None
+
+    def _build_prewarm_placeholder_input(
+        self,
+        next_stage_id: int,
+        request_id: str,
+        prompt_token_ids: Any,
+        req_state: OrchestratorRequestState,
+    ) -> dict[str, Any]:
+        """Build the async-chunk prewarm ``base_input`` dict for a downstream stage.
+
+        Uses the registered placeholder builder's ``build_prewarm_placeholder``
+        when available; otherwise (and on any builder failure) falls back to the
+        legacy inline estimate (``max(1, compute_talker_prompt_ids_length(...))``)
+        with a warning — the prewarm path must never raise.
+        """
+        from vllm_omni.model_executor.stage_input_processors import OrchestratorInputContext
+
+        original_prompt = req_state.prompt
+        if isinstance(original_prompt, dict):
+            import copy
+
+            base_input = copy.deepcopy(original_prompt)
+        else:
+            base_input = {}
+
+        prewarm_builder = self._get_prewarm_placeholder_builder(next_stage_id)
+        if prewarm_builder is not None:
+            try:
+                ctx = OrchestratorInputContext(
+                    prompt=req_state.prompt,
+                    requires_multimodal_data=False,
+                    streaming_context=None,
+                )
+                placeholders = prewarm_builder(
+                    stage0_prompt=prompt_token_ids,
+                    ctx=ctx,
+                    downstream_stage_id=next_stage_id,
+                )
+                placeholder = placeholders[0] if placeholders else None
+                if placeholder is not None:
+                    ph_ids = (
+                        placeholder["prompt_token_ids"]
+                        if isinstance(placeholder, dict)
+                        else getattr(placeholder, "prompt_token_ids", None)
+                    )
+                    if ph_ids:
+                        base_input["prompt_token_ids"] = list(ph_ids)
+                        base_input["multi_modal_data"] = None
+                        base_input["mm_processor_kwargs"] = None
+                        return base_input
+            except Exception as exc:
+                logger.warning(
+                    "[Orchestrator] req=%s: prewarm placeholder builder for "
+                    "stage-%s raised; falling back to inline estimate: %s",
+                    request_id,
+                    next_stage_id,
+                    exc,
+                )
+
+        # Legacy inline fallback (RFC #4872 P8b: warn-and-keep-old behaviour so
+        # the prewarm never regresses on models without a dual-entry builder).
+        from vllm_omni.distributed.omni_connectors.adapter import compute_talker_prompt_ids_length
+
+        try:
+            next_prompt_len = max(1, compute_talker_prompt_ids_length(prompt_token_ids))
+        except Exception:
+            next_prompt_len = max(1, len(prompt_token_ids))
+        base_input["prompt_token_ids"] = [0] * next_prompt_len
+        base_input["multi_modal_data"] = None
+        base_input["mm_processor_kwargs"] = None
+        return base_input
 
     def _build_kv_sender_info(
         self,
