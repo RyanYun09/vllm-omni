@@ -9,7 +9,6 @@ Directly inherits from vLLM's AsyncMPClient to reuse EngineCore architecture.
 
 from __future__ import annotations
 
-import inspect
 import os
 import socket
 from typing import TYPE_CHECKING, Any
@@ -433,10 +432,29 @@ class StageEngineCoreClientBase(StageClientBase):
         and the original prompt.
         """
         if self.custom_process_input_func is not None:
-            return self._call_custom_process_input(source_outputs, prompt, streaming_context)
+        if self.custom_process_input_func is not None:
+            # RFC #4872 Phase 2 (P1): dispatch through the shared contract layer,
+            # replacing the ad-hoc arity probe (`len(signature.parameters) >= 4`).
+            from vllm_omni.model_executor.stage_input_processors._dispatch import (
+                OrchestratorInputContext,
+                invoke_orchestrator_processor,
+            )
+
+            ctx = OrchestratorInputContext(
+                prompt=prompt,
+                requires_multimodal_data=self.requires_multimodal_data,
+                streaming_context=streaming_context,
+            )
+            return invoke_orchestrator_processor(
+                self.custom_process_input_func,
+                source_outputs,
+                ctx,
+            )
 
         if not self.engine_input_source:
             raise ValueError(f"engine_input_source empty for stage {self.stage_id}")
+        # The default path below is itself a C0-shape processor; it is kept out of
+        # the contract dispatch to preserve its exact fallback semantics unchanged.
         return _default_process_engine_inputs(source_outputs, prompt, self.requires_multimodal_data)
 
     def _call_custom_process_input(
