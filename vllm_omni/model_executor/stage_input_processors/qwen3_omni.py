@@ -49,6 +49,44 @@ _QWEN3_CODEC_BOS_TOKEN_ID = 4197
 _QWEN3_CODEC_EOS_TOKEN_ID = 4198
 
 
+def _assert_codec_token_ids_consistent() -> None:
+    """Fail-fast guard (RFC #4872 P6): codec token ids must not drift.
+
+    These ids are model-specific special tokens.  The HF config classes are
+    the single source of truth at runtime -- the talker reads
+    ``codec_pad_id`` / ``codec_bos_id`` / ``codec_eos_token_id`` off
+    ``talker_config``.  The processor keeps its own module-top constants
+    (used by ``talker2code2wav_*`` bookkeeping) and verifies them against
+    both the in-repo Qwen3-TTS config and the transformers
+    ``Qwen3OmniMoeTalkerConfig`` (the config qwen3-omni actually runs with).
+    """
+    from vllm_omni.model_executor.models.qwen3_tts.configuration_qwen3_tts import (
+        Qwen3TTSTalkerConfig,
+    )
+    from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+        Qwen3OmniMoeTalkerConfig,
+    )
+
+    expected = (
+        _QWEN3_CODEC_PAD_TOKEN_ID,
+        _QWEN3_CODEC_BOS_TOKEN_ID,
+        _QWEN3_CODEC_EOS_TOKEN_ID,
+    )
+    for name, cfg in (
+        ("qwen3_tts", Qwen3TTSTalkerConfig()),
+        ("qwen3_omni_moe", Qwen3OmniMoeTalkerConfig()),
+    ):
+        actual = (cfg.codec_pad_id, cfg.codec_bos_id, cfg.codec_eos_token_id)
+        assert actual == expected, (
+            f"{name} codec token ids {actual} drift from the "
+            f"stage_input_processors.qwen3_omni constants {expected}"
+        )
+
+
+# Single source of truth: keep processor / model impl / HF config in sync.
+_assert_codec_token_ids_consistent()
+
+
 def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
     """Fetch layer tensor with tolerant key lookup (str/int)."""
     if not isinstance(layers, dict):
