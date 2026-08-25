@@ -250,6 +250,88 @@ async def test_async_prewarm_skips_outgoing_only_stage(payload_sender_info) -> N
 
 
 @pytest.mark.asyncio
+async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
+    """RFC #4872 P8b: async-chunk prewarm resolves ``sync_process_input_func``
+    (``*_token_only``) to ``build_prewarm_placeholder`` and uses its estimate.
+
+    The placeholder length is ``stage0_only`` = ``len(stage0 prompt_token_ids)``
+    (best-effort; the connector fixup path replaces it later).
+    """
+    orchestrator = object.__new__(Orchestrator)
+    stage0 = FakePrewarmPool("sender")
+    stage1 = FakePrewarmPool("receiver")
+    # The real qwen3_omni sync placeholder builder exposes build_prewarm_placeholder
+    # off the resolved fn (see test_placeholder_parity.py).
+    stage1.stage_client = SimpleNamespace(
+        sync_process_input_func=(
+            "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_token_only"
+        ),
+    )
+    orchestrator.stage_pools = [stage0, stage1]
+    orchestrator._emit_tx_edge = lambda **_kwargs: None
+    orchestrator._record_duplex_stage_submission = MagicMock()
+    req_state = OrchestratorRequestState(
+        request_id="req-prewarm-resolved",
+        prompt={"prompt_token_ids": [1, 2]},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=1,
+    )
+
+    prewarmed = await orchestrator._prewarm_async_chunk_stages(
+        "req-prewarm-resolved",
+        SimpleNamespace(prompt_token_ids=[1, 2], resumable=True),
+        req_state,
+    )
+
+    assert prewarmed is True
+    assert len(stage1.submitted) == 1
+    # build_prewarm_placeholder uses stage0_only = len(stage0 prompt) == 2.
+    assert stage1.submitted[0].prompt_token_ids == [0, 0]
+    orchestrator._record_duplex_stage_submission.assert_called_once_with(
+        1,
+        "req-prewarm-resolved",
+        0,
+        req_state,
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplex_prewarm_runs_after_first_stage0_submission() -> None:
+    port, stage_pools, request_states, prewarm, submission = _duplex_stage_port_submission()
+    prewarm.return_value = True
+
+    result = await port.submit(submission)
+
+    assert result.stage_id == 0
+    stage_pools[0].submit_initial.assert_awaited_once()
+    prewarm.assert_awaited_once_with("req-duplex", ANY, request_states["req-duplex"])
+
+
+@pytest.mark.asyncio
+async def test_duplex_submit_bails_out_when_prewarm_failed_the_request() -> None:
+    """A failed prewarm has already aborted the request and popped its state.
+
+    Returning a success result here would hand the control plane a replica for a
+    request that no longer exists, and the trailing bookkeeping would re-register
+    a running counter the cleanup just released -- a leak that never decrements.
+    """
+    port, stage_pools, request_states, prewarm, submission = _duplex_stage_port_submission()
+    counter = MagicMock()
+    port._running_counter = counter
+    prewarm.return_value = False
+    request_state = request_states["req-duplex"]
+
+    with pytest.raises(RuntimeError, match="prewarm failed"):
+        await port.submit(submission)
+
+    prewarm.assert_awaited_once()
+    assert request_state.duplex_stage_fences == {}
+    assert request_state.stage_submit_ts == {}
+    assert request_state.running_counter_registered is False
+    counter.increment.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_async_route_forwards_to_outgoing_only_stage() -> None:
     orchestrator = object.__new__(Orchestrator)
     orchestrator.async_chunk = True

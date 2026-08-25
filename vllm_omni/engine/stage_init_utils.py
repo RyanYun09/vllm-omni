@@ -572,7 +572,10 @@ class StageMetadata:
     custom_process_input_func: Callable | None
     model_stage: str | None
     runtime_cfg: Any
-    prompt_transform_func: Callable | None = None
+    # RFC #4872 P8b: raw ``sync_process_input_func`` path (the ``*_token_only``
+    # placeholder builder) so the orchestrator can resolve
+    # ``build_prewarm_placeholder`` at async-chunk prewarm time.
+    sync_process_input_func: str | None = None
     prompt_expand_func: Callable | None = None
     cfg_kv_collect_func: Callable | None = None
     # Multi-replica: replica_id distinguishes replicas of the same stage.
@@ -658,11 +661,12 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
                 exc,
             )
 
-    prompt_transform_func: Callable | None = None
-    _ptf_path = _get_attr_or_item(stage_config, "prompt_transform_func")
-    if _ptf_path:
-        _mod, _fn = _ptf_path.rsplit(".", 1)
-        prompt_transform_func = getattr(importlib.import_module(_mod), _fn)
+    sync_process_input_func: str | None = None
+    _spif_path = _get_attr_or_item(stage_config, "sync_process_input_func")
+    if _spif_path:
+        # Keep the raw dotted path (not a resolved callable): the orchestrator
+        # resolves ``build_prewarm_placeholder`` off the ``*_token_only`` fn.
+        sync_process_input_func = _spif_path
 
     prompt_expand_func: Callable | None = None
     _pef_path = _get_attr_or_item(stage_config, "prompt_expand_func")
@@ -690,6 +694,7 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
             final_output_type=final_output_type,
             default_sampling_params=default_params,
             custom_process_input_func=custom_process_input_func,
+            sync_process_input_func=sync_process_input_func,
             model_stage=model_stage,
             runtime_cfg=runtime_cfg,
             prompt_transform_func=prompt_transform_func,
@@ -711,6 +716,7 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
         final_output_type=final_output_type,
         default_sampling_params=default_params,
         custom_process_input_func=custom_process_input_func,
+        sync_process_input_func=sync_process_input_func,
         model_stage=model_stage,
         runtime_cfg=runtime_cfg,
         prompt_transform_func=prompt_transform_func,
@@ -744,6 +750,11 @@ def extract_stage_metadata_from_omni_stage_config(
         sampling_params_cls = SamplingParams if stage_type == "llm" else OmniDiffusionSamplingParams
         sampling_params = sampling_params_cls(**(stage_config.model_config.default_sampling_params or {}))
     custom_process_input_func = _resolve_omni_metadata_hook(stage_config.custom_process_input_func)
+    # RFC #4872 P8b: carry the raw sync path for async-chunk prewarm resolution.
+    sync_process_input_func: str | None = None
+    _spif_path = getattr(stage_config.stage_pipeline_config, "sync_process_input_func", None)
+    if _spif_path:
+        sync_process_input_func = _spif_path
 
     if stage_type == "diffusion":
         return StageMetadata(
@@ -757,6 +768,7 @@ def extract_stage_metadata_from_omni_stage_config(
             final_output_type=stage_config.final_output_type,
             default_sampling_params=sampling_params,
             custom_process_input_func=custom_process_input_func,
+            sync_process_input_func=sync_process_input_func,
             model_stage=stage_config.model_stage,
             runtime_cfg=stage_config.runtime_config,
             prompt_transform_func=_resolve_omni_metadata_hook(stage_config.prompt_transform_func),
@@ -774,6 +786,7 @@ def extract_stage_metadata_from_omni_stage_config(
         final_output_type=stage_config.final_output_type,
         default_sampling_params=sampling_params,
         custom_process_input_func=custom_process_input_func,
+        sync_process_input_func=sync_process_input_func,
         model_stage=stage_config.model_stage,
         runtime_cfg=stage_config.runtime_config,
         prompt_transform_func=_resolve_omni_metadata_hook(stage_config.prompt_transform_func),
