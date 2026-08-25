@@ -12,6 +12,7 @@ from vllm_omni.diffusion.io_support import get_diffusion_output_type, supports_a
 from vllm_omni.diffusion.registry import DiffusionModelRegistry
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.inputs.data import OmniPromptType
+from vllm_omni.model_executor.stage_input_processors import _common
 from vllm_omni.outputs import OmniRequestOutput
 from vllm_omni.outputs.output_metadata import (
     DiffusionMetadata,
@@ -202,9 +203,8 @@ def _stream_metadata_from_diffusion_output(diffusion_output: DiffusionOutput) ->
 
 
 def _ensure_list(outputs: DiffusionPayloadValue) -> list[DiffusionPayloadValue]:
-    if isinstance(outputs, list):
-        return outputs
-    return [outputs] if outputs is not None else []
+    """Delegate to the canonical shared helper (RFC #4872 Step 1c)."""
+    return _common.ensure_list(outputs)
 
 
 def _primary_payload(postprocess_output: DiffusionPostprocessOutput) -> DiffusionPayloadValue | None:
