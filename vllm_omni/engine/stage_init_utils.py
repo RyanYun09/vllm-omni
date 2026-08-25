@@ -47,6 +47,7 @@ from vllm_omni.entrypoints.stage_utils import _to_dict, set_stage_devices
 from vllm_omni.entrypoints.utils import filter_dataclass_kwargs, resolve_model_config_path
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
 from vllm_omni.inputs.preprocess import OmniInputPreprocessor
+from vllm_omni.model_executor.stage_input_processors import resolve_processor
 from vllm_omni.outputs.output_processor import MultimodalOutputProcessor
 from vllm_omni.platforms import current_omni_platform
 from vllm_omni.quantization.inc_config import OmniINCConfig
@@ -421,8 +422,24 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
     custom_process_input_func: Callable | None = None
     _cpif_path = _get_attr_or_item(stage_config, "custom_process_input_func")
     if _cpif_path:
-        mod_path, fn_name = _cpif_path.rsplit(".", 1)
-        custom_process_input_func = getattr(importlib.import_module(mod_path), fn_name)
+        # RFC #4872 Phase 3 (Part A): resolve through the stage-input processor
+        # registry.  expected_kind is deliberately None here — orchestrator-side
+        # processors carry no suffix contract, so we rely on suffix inference
+        # only (compatible with existing configs).  A bad path must not kill
+        # startup (M0): warn and continue without the hook.
+        try:
+            custom_process_input_func = resolve_processor(
+                _cpif_path,
+                expected_kind=None,
+                stage_config=stage_config,
+            ).fn
+        except Exception as exc:
+            logger.warning(
+                "[stage_init] Failed to resolve custom_process_input_func %r; "
+                "continuing without it (RFC #4872 M0: warn, not fail): %s",
+                _cpif_path,
+                exc,
+            )
 
     prompt_expand_func: Callable | None = None
     _pef_path = _get_attr_or_item(stage_config, "prompt_expand_func")
