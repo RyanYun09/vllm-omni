@@ -12,6 +12,8 @@ from vllm_omni.config.stage_config import (
     StageExecutionType,
     StagePipelineConfig,
 )
+# RFC #4872 P6: 8294 single-sourced in the stage input processor.
+from vllm_omni.model_executor.stage_input_processors.qwen2_5_omni import TALKER_CODEC_END_TOKEN_ID
 
 _PROC = "vllm_omni.model_executor.stage_input_processors.qwen2_5_omni"
 
@@ -45,7 +47,7 @@ QWEN2_5_OMNI_PIPELINE = PipelineConfig(
             custom_process_next_stage_input_func=f"{_PROC}.talker2code2wav_full_payload",
             sampling_constraints={
                 "detokenize": True,
-                "stop_token_ids": [8294],
+                "stop_token_ids": [TALKER_CODEC_END_TOKEN_ID],
             },
         ),
         StagePipelineConfig(
