@@ -17,8 +17,9 @@ Orchestrator-facing roles are normalized through
     - diffusion   : upstream outputs -> diffusion payload(s)
       (``DiffusionInputBuilder``).
 
-This package only re-exports the dispatch contract; it imports no other
-processor modules, so importing it never pulls in model-specific code.
+This package only re-exports the dispatch contract and the processor registry;
+it imports no other processor modules, so importing it never pulls in
+model-specific code.
 """
 
 from vllm_omni.model_executor.stage_input_processors._dispatch import (
@@ -30,6 +31,16 @@ from vllm_omni.model_executor.stage_input_processors._dispatch import (
     invoke_orchestrator_processor,
     wrap_orchestrator_processor,
 )
+from vllm_omni.model_executor.stage_input_processors._registry import (
+    ProcessorKind,
+    ProcessorSpec,
+    ProcessorValidationError,
+    dead_processor_hint,
+    infer_kind,
+    register_processor,
+    resolve_processor,
+    validate_processor,
+)
 
 __all__ = [
     "OrchestratorInputContext",
@@ -39,4 +50,12 @@ __all__ = [
     "AsyncChunkProducer",
     "invoke_orchestrator_processor",
     "wrap_orchestrator_processor",
+    "ProcessorKind",
+    "ProcessorSpec",
+    "ProcessorValidationError",
+    "resolve_processor",
+    "register_processor",
+    "infer_kind",
+    "validate_processor",
+    "dead_processor_hint",
 ]
