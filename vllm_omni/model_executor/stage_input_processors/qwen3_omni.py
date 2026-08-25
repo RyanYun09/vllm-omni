@@ -23,6 +23,7 @@ from vllm_omni.data_entry_keys import (
 )
 from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.inputs.data import OmniTokensPrompt
+from vllm_omni.model_executor.stage_input_processors import _common
 from vllm_omni.model_executor.stage_input_processors.tts_utils import (
     extract_language_from_prompt,
     extract_language_from_request,
@@ -101,12 +102,11 @@ def _compute_talker_prompt_ids_length(info: OmniPayload, device: torch.device | 
 
 
 def _ensure_list(x):
-    """Convert ConstantList / tensor-like to Python list."""
-    if hasattr(x, "_x"):
-        return list(x._x)
-    elif not isinstance(x, list):
-        return x
-    return list(x)
+    """Convert ConstantList / tensor-like to Python list.
+
+    RFC #4872 P3: delegate to the canonical ``_common.ensure_list_unchanged``.
+    """
+    return _common.ensure_list_unchanged(x)
 
 
 def _as_tensor_or_none(value: Any) -> torch.Tensor | None:
