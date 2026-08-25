@@ -1981,20 +1981,22 @@ class Orchestrator:
             if next_client.custom_process_input_func is not None:
                 _t_ar2d = _time.perf_counter()
                 _fn = next_client.custom_process_input_func
-                _extra_kwargs: dict[str, Any] = {}
-                # TODO: replace signature probe with explicit kwarg contract.
-                try:
-                    import inspect as _inspect
+                # RFC #4872 Phase 2 (P1): dispatch through the shared contract
+                # layer, replacing the ad-hoc `sampling_params` name probe.
+                from vllm_omni.model_executor.stage_input_processors._dispatch import (
+                    OrchestratorInputContext,
+                    invoke_orchestrator_processor,
+                )
 
-                    if "sampling_params" in _inspect.signature(_fn).parameters:
-                        _extra_kwargs["sampling_params"] = params
-                except (TypeError, ValueError):
-                    pass
-                diffusion_prompt = _fn(
+                _ctx = OrchestratorInputContext(
+                    prompt=req_state.prompt,
+                    requires_multimodal_data=requires_multimodal_data,
+                    sampling_params=params,
+                )
+                diffusion_prompt = invoke_orchestrator_processor(
+                    _fn,
                     diffusion_source_outputs,
-                    req_state.prompt,
-                    requires_multimodal_data,
-                    **_extra_kwargs,
+                    _ctx,
                 )
                 _dt_ar2d = (_time.perf_counter() - _t_ar2d) * 1000
                 req_state.pipeline_timings["ar2diffusion_ms"] = _dt_ar2d
