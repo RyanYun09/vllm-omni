@@ -492,35 +492,48 @@ thinker_hidden_states = output.multimodal_output["24"]
 
 Create stage transition processors in `vllm_omni/model_executor/stage_input_processors/your_model_name.py`. Each inter-stage edge should provide a **coherent processor set** rather than a single monolithic function:
 
-| Suffix | Role | Runs when |
-|--------|------|-----------|
-| `*_full_payload` | Worker-side payload producer | `async_chunk=false`; accumulates tensors and ships via connector |
-| `*_async_chunk` | Scheduler-side streaming producer | `async_chunk=true`; emits per-chunk payloads |
-| `*_token_only` | Orchestrator placeholder builder | `async_chunk=false`; allocates downstream prompt slots only |
+| Suffix | Registry kind | Runs where | Role |
+|--------|---------------|------------|------|
+| `*_full_payload` | `producer_full_payload` | Worker (producer-side) | `async_chunk=false`; accumulates tensors and ships via connector |
+| `*_async_chunk` | `producer_async_chunk` | Scheduler (producer-side) | `async_chunk=true`; emits per-chunk payloads |
+| `*_token_only` | `placeholder_prompt_builder` | Orchestrator (consumer-side) | Allocates downstream prompt slots only (both modes) |
+
+A model that supports **both** `async_chunk=false` and `async_chunk=true` must
+implement all three processors for every inter-stage edge — `*_full_payload`,
+`*_async_chunk` and `*_token_only`. The `*_token_only` placeholder builder is
+required in both modes: in non-async mode it builds the forward placeholder, in
+async mode the orchestrator reuses it to prewarm the downstream stage.
+
+Orchestrator-facing builders follow the C1 contract
+`(source_outputs, ctx: OrchestratorInputContext)`:
 
 ```python
-# qwen3_omni.py (Thinker → Talker, non-async path)
+# qwen3_omni.py (Thinker → Talker)
+
+from vllm_omni.model_executor.stage_input_processors import OrchestratorInputContext
+
 
 def thinker2talker_token_only(
     source_outputs: list[Any],
-    prompt: OmniTokensPrompt | TextPrompt | None = None,
-    requires_multimodal_data: bool = False,
-    streaming_context: Any | None = None,
+    ctx: OrchestratorInputContext,
 ) -> list[OmniTokensPrompt]:
     """Allocate talker prefill slots; bulk tensors arrive via the connector."""
     ...
 
 
 def thinker2talker_full_payload(
+    *,
     transfer_manager: Any,
     pooling_output: dict[str, Any],
     request: OmniEngineCoreRequest,
+    is_finished: bool = ...,  # optional: the worker retries without it
 ) -> dict[str, Any] | None:
     """Pack accumulated thinker hidden states into OmniPayload for stage-1."""
     ...
 
 
 def thinker2talker_async_chunk(
+    *,
     transfer_manager: Any,
     multimodal_output: OmniPayload | dict[str, Any],
     request: OmniEngineCoreRequest,
@@ -529,6 +542,13 @@ def thinker2talker_async_chunk(
     """Stream thinker rows to talker while async_chunk is enabled."""
     ...
 ```
+
+`OrchestratorInputContext` carries `prompt`, `requires_multimodal_data`,
+`streaming_context` and `sampling_params` (and deliberately has no
+`model_config` field). The producer-side builders (`*_full_payload`,
+`*_async_chunk`) are keyword-only and never receive an
+`OrchestratorInputContext`; `pooling_output` / `multimodal_output` are
+load-bearing keyword names of the connector data plane.
 
 Wire these in `pipeline.py`:
 
@@ -546,7 +566,34 @@ StagePipelineConfig(
 ),
 ```
 
-Do **not** add a no-suffix `thinker2talker` when a `sync_process_input_func` is already declared — `_select_processor_funcs()` always prefers the `*_token_only` hook in non-async mode, so the bare function would never run. See `docs/design/rfc_stage_input_processors_refactor.md` for the full contract.
+### Registry registration and validation
+
+The processor registry infers a processor's kind from its name suffix and
+structurally validates the signature at startup (it never executes processor
+logic). Names that do not follow the suffix convention can register an explicit
+kind override once, e.g. at module import time:
+
+```python
+from vllm_omni.model_executor.stage_input_processors import register_processor
+
+register_processor(f"{_PROC}.thinker2talker_token_only", "placeholder_prompt_builder")
+```
+
+At startup the runtime resolves each processor through
+`resolve_processor(path, expected_kind=...)` — import -> `infer_kind` ->
+`validate_processor` -> expected-kind check — and returns a `ProcessorSpec`
+whose `fn` is the same callable a legacy `getattr(importlib.import_module(...),
+...)` lookup would produce. Hard contract violations raise
+`ProcessorValidationError`; soft mismatches (e.g. a `*_full_payload` builder
+declaring `multimodal_output` instead of `pooling_output`) emit a
+`RuntimeWarning`. New model processors should therefore match the suffix
+convention and the corresponding signature exactly.
+
+Do **not** add a no-suffix `thinker2talker` when a `sync_process_input_func` is
+already declared — `_select_processor_funcs()` always prefers the `*_token_only`
+hook in non-async mode, so the bare function would never run. See the
+[Stage Input Processor Contract](../../design/feature/async_chunk.md#stage-input-processor-contract)
+section of the async chunk design document for the full contract.
 
 ## Testing
 
