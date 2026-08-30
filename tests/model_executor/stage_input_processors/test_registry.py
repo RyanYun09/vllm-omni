@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Unit tests for the RFC #4872 Phase 3 (Part A) processor registry.
 
 Pure-logic, CPU-only: exercises kind inference, structural validation,
@@ -16,14 +19,15 @@ from vllm_omni.model_executor.stage_input_processors import (
     ProcessorKind,
     ProcessorSpec,
     ProcessorValidationError,
+    _registry,
     dead_processor_hint,
     infer_kind,
     register_processor,
     resolve_processor,
     validate_processor,
 )
-from vllm_omni.model_executor.stage_input_processors import _registry
 
+pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 # ---------------------------------------------------------------------------
 # Dummy processors (simple callables used as validation subjects).

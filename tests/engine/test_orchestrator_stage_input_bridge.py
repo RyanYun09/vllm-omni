@@ -50,7 +50,7 @@ class FakeStageClient:
         self.next_inputs = list(next_inputs or [])
         self.add_request_calls: list[tuple[Any, ...]] = []
         self.decoded_source_tokens: str | None = None
-        self._engine_core_outputs = queue.Queue()
+        self._engine_core_outputs: queue.Queue[Any] = queue.Queue()
 
     async def add_request_async(self, *args, **_kwargs) -> None:
         self.add_request_calls.append(args)
@@ -288,7 +288,7 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
     stage1 = FakePrewarmPool("receiver")
     # The real qwen3_omni sync placeholder builder exposes build_prewarm_placeholder
     # off the resolved fn (see test_placeholder_parity.py).
-    stage1.stage_client = SimpleNamespace(
+    stage1.stage_client = SimpleNamespace(  # type: ignore[attr-defined]
         sync_process_input_func=(
             "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_token_only"
         ),

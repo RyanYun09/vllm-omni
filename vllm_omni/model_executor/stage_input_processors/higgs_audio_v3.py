@@ -78,9 +78,7 @@ def _filter_real_code_frames(audio_codes_qt: torch.Tensor) -> torch.Tensor:
     RFC #4872 P3: delegate to the canonical ``_common.filter_real_code_frames``
     with the higgs-v3 ``[num_codebooks, num_frames]`` layout.
     """
-    return _common.filter_real_code_frames(
-        audio_codes_qt, num_real_codes=_NUM_REAL_CODES, layout="codebooks_first"
-    )
+    return _common.filter_real_code_frames(audio_codes_qt, num_real_codes=_NUM_REAL_CODES, layout="codebooks_first")
 
 
 def talker2code2wav(
