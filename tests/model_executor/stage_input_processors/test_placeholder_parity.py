@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """P8b parity tests: async-chunk prewarm placeholder vs sync forward placeholder.
 
 RFC #4872 Proposal 8b: ``*_token_only`` placeholder builders expose a dual entry
@@ -52,6 +52,7 @@ def _shim_active() -> bool:
     """True when the local-dev vllm stub (no real vllm) is in effect."""
     try:
         import vllm_omni  # noqa: F401
+
         return bool(getattr(vllm_omni, "_SHIM_ACTIVE", False))
     except Exception:
         return False

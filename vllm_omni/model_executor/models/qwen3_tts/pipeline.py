@@ -10,6 +10,7 @@ from vllm_omni.config.stage_config import (
     StageExecutionType,
     StagePipelineConfig,
 )
+
 # RFC #4872 P6: talker stop token single-sourced in the shared constants
 # module (also used by qwen3_omni / aura_omni pipelines).
 from vllm_omni.model_executor.stage_input_processors._constants import QWEN3_CODEC_EOS_TOKEN_ID

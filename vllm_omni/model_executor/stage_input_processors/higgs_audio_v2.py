@@ -56,9 +56,7 @@ def _filter_real_code_frames(audio_codes: torch.Tensor) -> torch.Tensor:
     RFC #4872 P3: delegate to the canonical ``_common.filter_real_code_frames``
     with the higgs-v2 ``[num_frames, num_codebooks]`` layout.
     """
-    return _common.filter_real_code_frames(
-        audio_codes, num_real_codes=_NUM_REAL_CODES, layout="frames_first"
-    )
+    return _common.filter_real_code_frames(audio_codes, num_real_codes=_NUM_REAL_CODES, layout="frames_first")
 
 
 def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:

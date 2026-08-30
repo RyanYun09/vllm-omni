@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """RFC #4872 P6: constant-consistency guards.
 
 Verifies that magic special-token ids that were previously duplicated across
@@ -16,14 +16,18 @@ processors / pipelines / model implementations now resolve to a single value:
 CPU-only: imports modules and reads constants; never loads model weights.
 """
 
+import pytest
+
 from vllm_omni.model_executor.models.aura_omni.pipeline import AURA_OMNI_PIPELINE
 from vllm_omni.model_executor.models.qwen2_5_omni.pipeline import QWEN2_5_OMNI_PIPELINE
 from vllm_omni.model_executor.models.qwen2_5_omni.qwen2_5_omni import TALKER_CODEC_EOS_TOKEN_ID
 from vllm_omni.model_executor.models.qwen3_omni.pipeline import QWEN3_OMNI_PIPELINE
 from vllm_omni.model_executor.models.qwen3_omni.qwen3_omni import (
     TALKER_CODEC_BOS_TOKEN_ID,
-    TALKER_CODEC_EOS_TOKEN_ID as QWEN3_MODEL_CODEC_EOS,
     TALKER_CODEC_PAD_TOKEN_ID,
+)
+from vllm_omni.model_executor.models.qwen3_omni.qwen3_omni import (
+    TALKER_CODEC_EOS_TOKEN_ID as QWEN3_MODEL_CODEC_EOS,
 )
 from vllm_omni.model_executor.models.qwen3_tts.configuration_qwen3_tts import Qwen3TTSTalkerConfig
 from vllm_omni.model_executor.models.qwen3_tts.pipeline import QWEN3_TTS_PIPELINE
@@ -34,6 +38,8 @@ from vllm_omni.model_executor.stage_input_processors.qwen3_omni import (
     _QWEN3_CODEC_EOS_TOKEN_ID,
     _QWEN3_CODEC_PAD_TOKEN_ID,
 )
+
+pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 # Expected values locked by the baseline commit `731a771`.
 QWEN3_CODEC_EXPECTED = (4196, 4197, 4198)  # (pad, bos, eos)

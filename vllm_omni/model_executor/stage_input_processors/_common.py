@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Canonical, shared helpers for ``stage_input_processors``.
 
 RFC #4872 Proposal 3 / P8a.  These are consolidated implementations of
@@ -23,10 +26,10 @@ import torch
 
 from vllm_omni.inputs.data import OmniTokensPrompt
 
-
 # ===========================================================================
 # ensure_list
 # ===========================================================================
+
 
 def _unwrap_constant_list(x: Any) -> Any:
     """Unwrap a ``ConstantList``-like object exposing ``_x``."""
@@ -134,6 +137,7 @@ def ensure_list_preserve_none(x: Any) -> list[Any]:
 # to_cpu_tensor
 # ===========================================================================
 
+
 def to_cpu_tensor(value: Any) -> torch.Tensor | None:
     """Convert a value to a CPU tensor when possible; else ``None``.
 
@@ -154,6 +158,7 @@ def to_cpu_tensor(value: Any) -> torch.Tensor | None:
 # ===========================================================================
 # to_token_id_list
 # ===========================================================================
+
 
 def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
     """Convert a token-ish value into a flat ``list[int]``.
@@ -193,6 +198,7 @@ def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
 # revert_delay_pattern  (higgs_audio_v2 lenient vs higgs_audio_v3 strict)
 # ===========================================================================
 
+
 def revert_delay_pattern(
     audio_codes_qt: torch.Tensor,
     *,
@@ -210,16 +216,10 @@ def revert_delay_pattern(
     _NUM_CODEBOOKS``; v2 does not).
     """
     if audio_codes_qt.ndim != 2:
-        raise ValueError(
-            f"_revert_delay_pattern expects [Q, T] input; "
-            f"got {tuple(audio_codes_qt.shape)}"
-        )
+        raise ValueError(f"_revert_delay_pattern expects [Q, T] input; got {tuple(audio_codes_qt.shape)}")
     q, t = audio_codes_qt.shape
     if expected_codebooks is not None and q != expected_codebooks:
-        raise ValueError(
-            f"Expected exactly {expected_codebooks} codebook rows, got {q}. "
-            f"Input shape: [{q}, {t}]"
-        )
+        raise ValueError(f"Expected exactly {expected_codebooks} codebook rows, got {q}. Input shape: [{q}, {t}]")
     if t < q:
         if allow_short:
             return audio_codes_qt
@@ -232,6 +232,7 @@ def revert_delay_pattern(
 # ===========================================================================
 # filter_real_code_frames  (higgs v2 [frames,Q] vs v3 [Q,frames])
 # ===========================================================================
+
 
 def filter_real_code_frames(
     audio_codes: torch.Tensor,
@@ -251,13 +252,8 @@ def filter_real_code_frames(
         return audio_codes
     if layout == "frames_first":
         if audio_codes.ndim != 2:
-            raise ValueError(
-                f"expected [num_frames, num_codebooks] audio_codes; "
-                f"got shape {tuple(audio_codes.shape)}"
-            )
-        valid = (audio_codes >= 0).all(dim=1) & (
-            audio_codes < num_real_codes
-        ).all(dim=1)
+            raise ValueError(f"expected [num_frames, num_codebooks] audio_codes; got shape {tuple(audio_codes.shape)}")
+        valid = (audio_codes >= 0).all(dim=1) & (audio_codes < num_real_codes).all(dim=1)
         return audio_codes[valid]
     if layout == "codebooks_first":
         frames = audio_codes.t()
@@ -269,6 +265,7 @@ def filter_real_code_frames(
 # ===========================================================================
 # extract_last_codec_frame
 # ===========================================================================
+
 
 def extract_last_codec_frame(
     payload: Any,
@@ -314,9 +311,7 @@ def extract_last_codec_frame(
     elif audio_codes.ndim == 1:
         frame = audio_codes
     else:
-        raise ValueError(
-            f"unexpected audio_codes shape: {tuple(audio_codes.shape)}"
-        )
+        raise ValueError(f"unexpected audio_codes shape: {tuple(audio_codes.shape)}")
     if frame.numel() == 0:
         return None
     if validate in ("any", "valid_mask"):
@@ -376,12 +371,8 @@ def compute_placeholder_prompt_len(
         raise ValueError(f"unknown mode: {mode!r}")
 
     ids = (ids_or_prompt or {}).get("ids", {})
-    thinker_sequences = torch.tensor(
-        ids["all"], dtype=torch.long, device=device
-    ).unsqueeze(0)  # [1, T]
-    input_ids = torch.tensor(
-        ids["prompt"], dtype=torch.long, device=device
-    ).unsqueeze(0)  # [1, T]
+    thinker_sequences = torch.tensor(ids["all"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
+    input_ids = torch.tensor(ids["prompt"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
 
     im_start_indexes = torch.cat(
         [
@@ -423,5 +414,5 @@ def pack_placeholder_prompt(
     """
     return OmniTokensPrompt(
         prompt_token_ids=[0] * max(1, int(prompt_len)),
-        additional_information=(voice_metadata if voice_metadata else None),
+        additional_information=(voice_metadata if voice_metadata else None),  # type: ignore[typeddict-item]
     )
