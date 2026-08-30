@@ -63,6 +63,7 @@ QWEN3_OMNI_PIPELINE = PipelineConfig(
                 "detokenize": False,
                 "stop_token_ids": [QWEN3_CODEC_EOS_TOKEN_ID],
             },
+            requires_full_payload_input=True,
         ),
         StagePipelineConfig(
             stage_id=2,
@@ -74,6 +75,7 @@ QWEN3_OMNI_PIPELINE = PipelineConfig(
             hf_config_name="thinker_config",
             engine_output_type="audio",
             sampling_constraints={"detokenize": True},
+            requires_full_payload_input=True,
         ),
     ),
 )
