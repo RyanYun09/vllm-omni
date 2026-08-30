@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """RFC #4872 Phase 3 (Part A): stage-input processor registry.
 
 This module is the **structural validation** layer behind the three ``importlib``
@@ -414,7 +417,10 @@ def _check_async_chunk_is_finished(
             "it must be keyword-only or have a default",
         )
         return  # unreachable
-    if is_finished_param.kind != inspect.Parameter.KEYWORD_ONLY and is_finished_param.default is inspect.Parameter.empty:
+    if (
+        is_finished_param.kind != inspect.Parameter.KEYWORD_ONLY
+        and is_finished_param.default is inspect.Parameter.empty
+    ):
         _warn(
             path,
             kind,

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """RFC #4872 Phase 2 (P1): orchestrator input-dispatch contract layer.
 
 This module defines the **consumer-side (orchestrator / stage-client) dispatch
@@ -272,8 +275,7 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
     if "sampling_params" in names:
 
         def _c3(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-            return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data,
-                      sampling_params=ctx.sampling_params)
+            return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, sampling_params=ctx.sampling_params)
 
         _warn_legacy_contract(fn)
         return _c3  # type: ignore[return-value]

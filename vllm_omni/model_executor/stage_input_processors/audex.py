@@ -21,8 +21,8 @@ from vllm.logger import init_logger
 
 from vllm_omni.data_entry_keys import CodesStruct, MetaStruct, OmniPayloadStruct
 from vllm_omni.inputs.data import OmniTokensPrompt
-from vllm_omni.model_executor.stage_input_processors.bagel import ExpandedPrompt
 from vllm_omni.model_executor.stage_input_processors import _common
+from vllm_omni.model_executor.stage_input_processors.bagel import ExpandedPrompt
 
 logger = init_logger(__name__)
 
