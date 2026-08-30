@@ -64,6 +64,7 @@ from vllm_omni.model_executor.models.qwen3_omni.qwen3_omni_moe_thinker import (
 )
 from vllm_omni.model_executor.models.utils import add_prefix_to_loaded_weights, safe_tensor_reshape
 from vllm_omni.model_executor.stage_input_processors.chunk_size_utils import parse_chunk_ramp, ramp_decode_windows
+
 # RFC #4872 P6: codec token ids are single-sourced in the stage input
 # processor (``_QWEN3_CODEC_*``); the model keeps the ``TALKER_CODEC_*``
 # aliases for backwards compatibility.  At runtime the talker actually reads

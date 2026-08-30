@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Stage input processors: per-model builders for inter-stage transitions.
 
 Module-naming convention (RFC #4872):

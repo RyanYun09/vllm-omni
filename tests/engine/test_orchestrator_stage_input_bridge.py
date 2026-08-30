@@ -314,7 +314,7 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
     stage1 = FakePrewarmPool("receiver")
     # The real qwen3_omni sync placeholder builder exposes build_prewarm_placeholder
     # off the resolved fn (see test_placeholder_parity.py).
-    stage1.stage_client = SimpleNamespace(
+    stage1.stage_client = SimpleNamespace(  # type: ignore[attr-defined]
         sync_process_input_func=(
             "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_token_only"
         ),

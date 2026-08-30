@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Golden tests that lock the *current* per-module behavior of duplicated
 helper functions in ``stage_input_processors``.
 
@@ -14,10 +17,12 @@ run on CI where the real dependencies exist.
 """
 
 import importlib
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 import torch
+
+pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 _PREFIX = "vllm_omni.model_executor.stage_input_processors."
 
@@ -96,8 +101,7 @@ def _ensure_list_cases():
     ]
 
 
-@pytest.mark.parametrize("module,inp,expected,expect_typeerror",
-                         _ensure_list_cases())
+@pytest.mark.parametrize("module,inp,expected,expect_typeerror", _ensure_list_cases())
 def test_ensure_list_golden(module, inp, expected, expect_typeerror):
     mod = _import(module)
     fn = getattr(mod, "_ensure_list")
@@ -126,86 +130,69 @@ def _codes_audio(tensor):
     return {"codes": {"audio": tensor}}
 
 
-@pytest.mark.parametrize("module,payload,expected,expect_error", [
-    # higgs_audio_v2: codes.audio key path; range filter [-0, _NUM_REAL_CODES).
-    ("higgs_audio_v2",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])),
-     [4, 5], False),
-    ("higgs_audio_v2",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 1024]])),  # >= _NUM_REAL_CODES
-     None, False),
-    ("higgs_audio_v2",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [-1, 5]])),
-     None, False),
-    ("higgs_audio_v2",
-     _codes_audio(torch.tensor([1, 2, 3])),
-     [1, 2, 3], False),
-    ("higgs_audio_v2",
-     _codes_audio(torch.empty(0, 4)),
-     None, False),
-    ("higgs_audio_v2",
-     _codes_audio(torch.zeros(2, 2, 2)),
-     None, True),  # 3-D -> ValueError
-    ("higgs_audio_v2",
-     {"codes": {}},
-     None, False),
-    # fish_speech: TOP-LEVEL audio_codes key; audio_code_valid mask; cpu+long.
-    ("fish_speech",
-     {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]),
-      "audio_code_valid": torch.tensor([1, 1, 1])},
-     [4, 5], False),
-    ("fish_speech",
-     {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]),
-      "audio_code_valid": torch.tensor([1, 1, 0])},
-     None, False),
-    ("fish_speech",
-     {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]),
-      "audio_code_valid": True},
-     [4, 5], False),
-    ("fish_speech",
-     {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]),
-      "audio_code_valid": False},
-     None, False),
-    ("fish_speech",
-     {"audio_codes": torch.tensor([[0, 1], [2, 3], [0, 0]])},
-     None, False),  # no valid key -> frame.any() False
-    ("fish_speech",
-     {"audio_codes": torch.tensor([1, 2, 3])},
-     [1, 2, 3], False),
-    ("fish_speech",
-     {"audio_codes": torch.zeros(2, 2, 2)},
-     None, True),
-    ("fish_speech",
-     {},
-     None, False),
-    # qwen3_tts: codes.audio; frame.any() gate; long (no cpu).
-    ("qwen3_tts",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])),
-     [4, 5], False),
-    ("qwen3_tts",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [0, 0]])),
-     None, False),
-    ("qwen3_tts",
-     _codes_audio(torch.tensor([1, 2, 3])),
-     [1, 2, 3], False),
-    ("qwen3_tts",
-     _codes_audio(torch.zeros(2, 2, 2)),
-     None, True),
-    ("qwen3_tts",
-     {"codes": {}},
-     None, False),
-    # voxtral_tts: for a single tensor it flattens the WHOLE tensor (not just
-    # the last row); for a list of tensors it flattens the last tensor.
-    ("voxtral_tts",
-     _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])),
-     [0, 1, 2, 3, 4, 5], False),
-    ("voxtral_tts",
-     {"codes": {"audio": [torch.tensor([1, 2]), torch.tensor([3, 4])]}},
-     [3, 4], False),
-    ("voxtral_tts",
-     {"codes": {}},
-     None, False),
-])
+@pytest.mark.parametrize(
+    "module,payload,expected,expect_error",
+    [
+        # higgs_audio_v2: codes.audio key path; range filter [-0, _NUM_REAL_CODES).
+        ("higgs_audio_v2", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
+        (
+            "higgs_audio_v2",
+            _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 1024]])),  # >= _NUM_REAL_CODES
+            None,
+            False,
+        ),
+        ("higgs_audio_v2", _codes_audio(torch.tensor([[0, 1], [2, 3], [-1, 5]])), None, False),
+        ("higgs_audio_v2", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
+        ("higgs_audio_v2", _codes_audio(torch.empty(0, 4)), None, False),
+        ("higgs_audio_v2", _codes_audio(torch.zeros(2, 2, 2)), None, True),  # 3-D -> ValueError
+        ("higgs_audio_v2", {"codes": {}}, None, False),
+        # fish_speech: TOP-LEVEL audio_codes key; audio_code_valid mask; cpu+long.
+        (
+            "fish_speech",
+            {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": torch.tensor([1, 1, 1])},
+            [4, 5],
+            False,
+        ),
+        (
+            "fish_speech",
+            {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": torch.tensor([1, 1, 0])},
+            None,
+            False,
+        ),
+        (
+            "fish_speech",
+            {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": True},
+            [4, 5],
+            False,
+        ),
+        (
+            "fish_speech",
+            {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": False},
+            None,
+            False,
+        ),
+        (
+            "fish_speech",
+            {"audio_codes": torch.tensor([[0, 1], [2, 3], [0, 0]])},
+            None,
+            False,
+        ),  # no valid key -> frame.any() False
+        ("fish_speech", {"audio_codes": torch.tensor([1, 2, 3])}, [1, 2, 3], False),
+        ("fish_speech", {"audio_codes": torch.zeros(2, 2, 2)}, None, True),
+        ("fish_speech", {}, None, False),
+        # qwen3_tts: codes.audio; frame.any() gate; long (no cpu).
+        ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
+        ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [0, 0]])), None, False),
+        ("qwen3_tts", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
+        ("qwen3_tts", _codes_audio(torch.zeros(2, 2, 2)), None, True),
+        ("qwen3_tts", {"codes": {}}, None, False),
+        # voxtral_tts: for a single tensor it flattens the WHOLE tensor (not just
+        # the last row); for a list of tensors it flattens the last tensor.
+        ("voxtral_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [0, 1, 2, 3, 4, 5], False),
+        ("voxtral_tts", {"codes": {"audio": [torch.tensor([1, 2]), torch.tensor([3, 4])]}}, [3, 4], False),
+        ("voxtral_tts", {"codes": {}}, None, False),
+    ],
+)
 def test_extract_last_frame_golden(module, payload, expected, expect_error):
     mod = _import(module)
     fn = getattr(mod, "_extract_last_frame")
@@ -225,11 +212,13 @@ def test_extract_last_frame_golden(module, payload, expected, expect_error):
 def test_revert_delay_pattern_higgs_v2_golden():
     mod = _import("higgs_audio_v2")
     fn = getattr(mod, "_revert_delay_pattern")
-    inp = torch.tensor([
-        [10, 1, 2, 3, 4],
-        [11, 12, 5, 6, 7],
-        [13, 14, 15, 8, 9],
-    ])  # [Q=3, T=5], seq_len = 3
+    inp = torch.tensor(
+        [
+            [10, 1, 2, 3, 4],
+            [11, 12, 5, 6, 7],
+            [13, 14, 15, 8, 9],
+        ]
+    )  # [Q=3, T=5], seq_len = 3
     out = fn(inp)
     assert out.shape == (3, 3)
     assert out.tolist() == [[10, 1, 2], [12, 5, 6], [15, 8, 9]]
@@ -250,9 +239,7 @@ def test_revert_delay_pattern_higgs_v3_golden():
     inp = torch.arange(q * t, dtype=torch.long).reshape(q, t)
     out = fn(inp)
     assert out.shape == (q, 3)
-    expected = torch.cat(
-        [inp[i : i + 1, i : 3 + i] for i in range(q)], dim=0
-    )
+    expected = torch.cat([inp[i : i + 1, i : 3 + i] for i in range(q)], dim=0)
     assert torch.equal(out, expected)
     # Strict: wrong codebook count raises.
     with pytest.raises(ValueError):
@@ -271,12 +258,14 @@ def test_filter_real_code_frames_higgs_v2_golden():
     mod = _import("higgs_audio_v2")
     fn = getattr(mod, "_filter_real_code_frames")
     nrc = int(mod._NUM_REAL_CODES)
-    inp = torch.tensor([
-        [0, 1, 2],
-        [nrc, 5, 6],   # invalid (>= _NUM_REAL_CODES)
-        [7, 8, 9],
-        [-1, 0, 1],    # invalid (< 0)
-    ])
+    inp = torch.tensor(
+        [
+            [0, 1, 2],
+            [nrc, 5, 6],  # invalid (>= _NUM_REAL_CODES)
+            [7, 8, 9],
+            [-1, 0, 1],  # invalid (< 0)
+        ]
+    )
     out = fn(inp)
     assert out.tolist() == [[0, 1, 2], [7, 8, 9]]
     # Empty input passes through.
@@ -289,12 +278,18 @@ def test_filter_real_code_frames_higgs_v3_golden():
     fn = getattr(mod, "_filter_real_code_frames")
     nrc = int(mod._NUM_REAL_CODES)
     # Input is [Q, frames]: 4 frames x 3 codebooks -> transpose to [Q=3, frames=4].
-    inp = torch.tensor([
-        [0, 1, 2],     # frame 0 (valid)
-        [nrc, 5, 6],   # frame 1 (invalid: >= _NUM_REAL_CODES)
-        [7, 8, 9],     # frame 2 (valid)
-        [-1, 0, 1],    # frame 3 (invalid: < 0)
-    ]).t().contiguous()
+    inp = (
+        torch.tensor(
+            [
+                [0, 1, 2],  # frame 0 (valid)
+                [nrc, 5, 6],  # frame 1 (invalid: >= _NUM_REAL_CODES)
+                [7, 8, 9],  # frame 2 (valid)
+                [-1, 0, 1],  # frame 3 (invalid: < 0)
+            ]
+        )
+        .t()
+        .contiguous()
+    )
     out = fn(inp)  # keeps frames 0 and 2
     assert out.shape == (3, 2)
     assert out.tolist() == [[0, 7], [1, 8], [2, 9]]
@@ -307,14 +302,17 @@ def test_filter_real_code_frames_higgs_v3_golden():
 # ===========================================================================
 
 
-@pytest.mark.parametrize("inp,expected", [
-    ("TENSOR", "TENSOR"),
-    ([], None),
-    ("LIST_TENSOR", "LIST_TENSOR"),
-    ([1, 2], None),
-    (None, None),
-    (5, None),
-])
+@pytest.mark.parametrize(
+    "inp,expected",
+    [
+        ("TENSOR", "TENSOR"),
+        ([], None),
+        ("LIST_TENSOR", "LIST_TENSOR"),
+        ([1, 2], None),
+        (None, None),
+        (5, None),
+    ],
+)
 def test_to_cpu_tensor_glm_tts_golden(inp, expected):
     mod = _import("glm_tts")
     fn = getattr(mod, "_to_cpu_tensor")
@@ -339,15 +337,18 @@ def test_to_cpu_tensor_glm_tts_golden(inp, expected):
 # ===========================================================================
 
 
-@pytest.mark.parametrize("inp,expected", [
-    ("SCALAR_TENSOR", [5]),
-    ("VEC_TENSOR", [1, 2, 3]),
-    ("MAT_TENSOR", [1, 2]),      # 2-D -> first row only
-    ("NESTED_LIST", [1, 2]),     # nested list -> first nested row only
-    ([1, 2, 3], [1, 2, 3]),
-    (None, []),
-    (5, [5]),
-])
+@pytest.mark.parametrize(
+    "inp,expected",
+    [
+        ("SCALAR_TENSOR", [5]),
+        ("VEC_TENSOR", [1, 2, 3]),
+        ("MAT_TENSOR", [1, 2]),  # 2-D -> first row only
+        ("NESTED_LIST", [1, 2]),  # nested list -> first nested row only
+        ([1, 2, 3], [1, 2, 3]),
+        (None, []),
+        (5, [5]),
+    ],
+)
 def test_to_token_id_list_dynin_omni_golden(inp, expected):
     mod = _import("dynin_omni")
     fn = getattr(mod, "_to_token_id_list")
@@ -396,6 +397,7 @@ def test_compute_talker_prompt_ids_length_golden():
 def _common_import() -> Any:
     try:
         import vllm_omni.model_executor.stage_input_processors._common as c
+
         return c
     except Exception as exc:  # pragma: no cover - env dependent
         pytest.skip(f"_common not importable here: {type(exc).__name__}: {exc}")
@@ -405,6 +407,7 @@ def _shim_active() -> bool:
     """True when the local-dev vllm stub (no real vllm) is in effect."""
     try:
         import vllm_omni  # noqa: F401
+
         return bool(getattr(vllm_omni, "_SHIM_ACTIVE", False))
     except Exception:
         return False
@@ -450,21 +453,19 @@ def test_common_to_token_id_list_matches_golden():
     assert c.to_token_id_list(5) == [5]
     # cosyvoice3 semantics: recursive flatten.
     assert c.to_token_id_list([[1, 2], [3, 4]], recursive=True) == [1, 2, 3, 4]
-    assert c.to_token_id_list(
-        torch.tensor([[1, 2], [3, 4]]), recursive=True
-    ) == [1, 2, 3, 4]
+    assert c.to_token_id_list(torch.tensor([[1, 2], [3, 4]]), recursive=True) == [1, 2, 3, 4]
 
 
 def test_common_revert_delay_pattern_matches_golden():
     c = _common_import()
-    inp = torch.tensor([
-        [10, 1, 2, 3, 4],
-        [11, 12, 5, 6, 7],
-        [13, 14, 15, 8, 9],
-    ])  # [Q=3, T=5]
-    assert c.revert_delay_pattern(inp, allow_short=True).tolist() == [
-        [10, 1, 2], [12, 5, 6], [15, 8, 9]
-    ]
+    inp = torch.tensor(
+        [
+            [10, 1, 2, 3, 4],
+            [11, 12, 5, 6, 7],
+            [13, 14, 15, 8, 9],
+        ]
+    )  # [Q=3, T=5]
+    assert c.revert_delay_pattern(inp, allow_short=True).tolist() == [[10, 1, 2], [12, 5, 6], [15, 8, 9]]
     # Lenient (v2): T < Q returns input unchanged.
     short = torch.tensor([[1], [2]])
     assert torch.equal(c.revert_delay_pattern(short, allow_short=True), short)
@@ -479,32 +480,45 @@ def test_common_filter_real_code_frames_matches_golden():
     c = _common_import()
     nrc = 1024
     # frames-first (v2 layout).
-    frames_first = torch.tensor([
-        [0, 1, 2], [nrc, 5, 6], [7, 8, 9], [-1, 0, 1],
-    ])
-    assert c.filter_real_code_frames(
-        frames_first, num_real_codes=nrc, layout="frames_first"
-    ).tolist() == [[0, 1, 2], [7, 8, 9]]
+    frames_first = torch.tensor(
+        [
+            [0, 1, 2],
+            [nrc, 5, 6],
+            [7, 8, 9],
+            [-1, 0, 1],
+        ]
+    )
+    assert c.filter_real_code_frames(frames_first, num_real_codes=nrc, layout="frames_first").tolist() == [
+        [0, 1, 2],
+        [7, 8, 9],
+    ]
     # codebooks-first (v3 layout).
-    codebooks_first = torch.tensor([
-        [0, 1, 2], [nrc, 5, 6], [7, 8, 9], [-1, 0, 1],
-    ]).t().contiguous()  # [Q=3, frames=4]
-    assert c.filter_real_code_frames(
-        codebooks_first, num_real_codes=nrc, layout="codebooks_first"
-    ).tolist() == [[0, 7], [1, 8], [2, 9]]
+    codebooks_first = (
+        torch.tensor(
+            [
+                [0, 1, 2],
+                [nrc, 5, 6],
+                [7, 8, 9],
+                [-1, 0, 1],
+            ]
+        )
+        .t()
+        .contiguous()
+    )  # [Q=3, frames=4]
+    assert c.filter_real_code_frames(codebooks_first, num_real_codes=nrc, layout="codebooks_first").tolist() == [
+        [0, 7],
+        [1, 8],
+        [2, 9],
+    ]
 
 
 def test_common_compute_placeholder_prompt_len_matches_golden():
     c = _common_import()
     prompt = [151644, 872, 10, 11, 12, 13, 151644, 77091, 20, 21]
     # full mode == qwen3_omni._compute_talker_prompt_ids_length golden (15).
-    assert c.compute_placeholder_prompt_len(
-        ids_or_prompt={"ids": {"all": prompt, "prompt": prompt}}, mode="full"
-    ) == 15
+    assert c.compute_placeholder_prompt_len(ids_or_prompt={"ids": {"all": prompt, "prompt": prompt}}, mode="full") == 15
     # stage0_only mode: just the stage-0 input prompt length (prewarm).
-    assert c.compute_placeholder_prompt_len(
-        ids_or_prompt=prompt, mode="stage0_only"
-    ) == len(prompt)
+    assert c.compute_placeholder_prompt_len(ids_or_prompt=prompt, mode="stage0_only") == len(prompt)
 
 
 def test_common_pack_placeholder_prompt():

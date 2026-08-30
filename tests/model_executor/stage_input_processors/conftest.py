@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Local-dev import shim for ``vllm_omni`` tests (macOS).
 
 vllm does not install on macOS, so importing real ``vllm_omni`` submodules
@@ -28,11 +31,7 @@ import types
 # Locate the repo root (this file lives at:
 #   <repo>/tests/model_executor/stage_input_processors/conftest.py)
 # ---------------------------------------------------------------------------
-_REPO_ROOT = os.path.dirname(
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _VLLM_OMNI_DIR = os.path.join(_REPO_ROOT, "vllm_omni")
 
 
@@ -84,7 +83,7 @@ class _StubLoader(importlib.abc.Loader):
     def create_module(self, spec):
         module = types.ModuleType(spec.name)
         module.__path__ = []
-        module.__getattr__ = lambda attr: _Dummy
+        module.__getattr__ = lambda attr: _Dummy  # type: ignore[method-assign]
         return module
 
     def exec_module(self, module):
@@ -96,9 +95,7 @@ class _StubFinder(importlib.abc.MetaPathFinder):
 
     def find_spec(self, fullname, path=None, target=None):
         if fullname == "vllm" or fullname.startswith("vllm."):
-            return importlib.machinery.ModuleSpec(
-                fullname, _StubLoader(), is_package=True
-            )
+            return importlib.machinery.ModuleSpec(fullname, _StubLoader(), is_package=True)
         return None
 
 
@@ -110,7 +107,7 @@ def _install_shim():
     pkg = types.ModuleType("vllm_omni")
     pkg.__path__ = [_VLLM_OMNI_DIR]
     pkg.__package__ = "vllm_omni"
-    pkg._SHIM_ACTIVE = True
+    pkg._SHIM_ACTIVE = True  # type: ignore[attr-defined]
     sys.modules.setdefault("vllm_omni", pkg)
     # Wildcard vllm stub finder (meta path -> takes precedence for vllm.*).
     sys.meta_path.insert(0, _StubFinder())

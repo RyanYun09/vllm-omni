@@ -60,11 +60,12 @@ def _assert_codec_token_ids_consistent() -> None:
     both the in-repo Qwen3-TTS config and the transformers
     ``Qwen3OmniMoeTalkerConfig`` (the config qwen3-omni actually runs with).
     """
-    from vllm_omni.model_executor.models.qwen3_tts.configuration_qwen3_tts import (
-        Qwen3TTSTalkerConfig,
-    )
     from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
         Qwen3OmniMoeTalkerConfig,
+    )
+
+    from vllm_omni.model_executor.models.qwen3_tts.configuration_qwen3_tts import (
+        Qwen3TTSTalkerConfig,
     )
 
     expected = (
@@ -78,8 +79,7 @@ def _assert_codec_token_ids_consistent() -> None:
     ):
         actual = (cfg.codec_pad_id, cfg.codec_bos_id, cfg.codec_eos_token_id)
         assert actual == expected, (
-            f"{name} codec token ids {actual} drift from the "
-            f"stage_input_processors.qwen3_omni constants {expected}"
+            f"{name} codec token ids {actual} drift from the stage_input_processors.qwen3_omni constants {expected}"
         )
 
 
