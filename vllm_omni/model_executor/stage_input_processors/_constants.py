@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """RFC #4872 P6: canonical cross-model constant definitions.
 
 Special-token ids that are shared across model pipelines / processors /

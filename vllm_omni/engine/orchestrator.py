@@ -2592,8 +2592,7 @@ class OrchestratorBase:
                     return builder
         except Exception as exc:  # pragma: no cover - defensive only
             logger.warning(
-                "[Orchestrator] prewarm placeholder builder lookup for stage-%s "
-                "failed; using the inline estimate: %s",
+                "[Orchestrator] prewarm placeholder builder lookup for stage-%s failed; using the inline estimate: %s",
                 stage_id,
                 exc,
             )

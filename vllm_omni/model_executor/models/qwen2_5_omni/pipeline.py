@@ -12,6 +12,7 @@ from vllm_omni.config.stage_config import (
     StageExecutionType,
     StagePipelineConfig,
 )
+
 # RFC #4872 P6: 8294 single-sourced in the stage input processor.
 from vllm_omni.model_executor.stage_input_processors.qwen2_5_omni import TALKER_CODEC_END_TOKEN_ID
 
