@@ -481,6 +481,7 @@ YOUR_TTS_PIPELINE = PipelineConfig(
             execution_type=StageExecutionType.LLM_GENERATION,
             input_sources=(0,),
             model_arch="YourTTSDecoder",
+            sync_process_input_func=f"{_PROC}.ar2decoder_token_only",
             engine_output_type="audio",
             final_output=True,
             final_output_type="audio",
@@ -520,6 +521,57 @@ Stage input processors convert Stage 0 outputs into Stage 1 inputs. Create yours
 `vllm_omni/model_executor/stage_input_processors/your_model_name.py`.
 
 See `stage_input_processors/qwen3_tts.py` for the full reference implementation.
+
+### Processor set and naming convention
+
+Each inter-stage edge provides a **coherent processor set** rather than a single
+monolithic function. The suffix convention and the matching registry kind are
+load-bearing:
+
+| Suffix | Registry kind | Runs where | Role |
+|--------|---------------|------------|------|
+| `*_full_payload` | `producer_full_payload` | Worker (producer-side) | `async_chunk=false`; packs the accumulated Stage 0 output and ships it via the connector |
+| `*_async_chunk` | `producer_async_chunk` | Scheduler (producer-side) | `async_chunk=true`; streams one chunk per AR decode step |
+| `*_token_only` | `placeholder_prompt_builder` | Orchestrator (consumer-side) | Allocates downstream KV slots only; bulk tensors arrive via the connector (both modes) |
+
+A model that supports **both** `async_chunk=false` and `async_chunk=true` must
+implement all three processors per edge — `ar2decoder` (full payload),
+`ar2decoder_async_chunk` and `ar2decoder_token_only`. The `*_token_only`
+placeholder builder is wired as the downstream stage's `sync_process_input_func`
+and follows the C1 contract `(source_outputs, ctx: OrchestratorInputContext)`:
+
+```python
+from vllm_omni.model_executor.stage_input_processors import OrchestratorInputContext
+
+
+def ar2decoder_token_only(
+    source_outputs: list[Any],
+    ctx: OrchestratorInputContext,
+) -> list[OmniTokensPrompt]:
+    """Allocate decoder prefill slots; bulk audio codes arrive via the connector."""
+    ...
+```
+
+`OrchestratorInputContext` carries `prompt`, `requires_multimodal_data`,
+`streaming_context` and `sampling_params` (and deliberately has no
+`model_config` field). Legacy positional shapes are adapted through
+`wrap_orchestrator_processor` with a `DeprecationWarning`.
+
+Names that do not follow the suffix convention can register an explicit kind
+override at module import time:
+
+```python
+from vllm_omni.model_executor.stage_input_processors import register_processor
+
+register_processor(f"{_PROC}.ar2decoder_token_only", "placeholder_prompt_builder")
+```
+
+At startup the runtime resolves each processor through
+`resolve_processor(path, expected_kind=...)` (import -> `infer_kind` ->
+`validate_processor` -> expected-kind check). Hard contract violations raise
+`ProcessorValidationError`; soft mismatches emit a `RuntimeWarning`. See the
+[Stage Input Processor Contract](../../design/feature/async_chunk.md#stage-input-processor-contract)
+section of the async chunk design document for the full contract.
 
 ### Data structures
 
@@ -563,8 +615,9 @@ have accumulated. The function signature follows the `OmniChunkTransferAdapter` 
 
 ```python
 def ar2decoder_async_chunk(
+    *,
     transfer_manager: Any,
-    pooling_output: dict[str, Any] | None,
+    multimodal_output: dict[str, Any] | None,
     request: Any,
     is_finished: bool = False,
 ) -> dict[str, Any] | None:
@@ -573,8 +626,8 @@ def ar2decoder_async_chunk(
     finished = bool(is_finished or request.is_finished())
 
     # Extract and buffer the latest frame
-    if isinstance(pooling_output, dict):
-        frame = extract_frame(pooling_output)
+    if isinstance(multimodal_output, dict):
+        frame = extract_frame(multimodal_output)
         if frame is not None:
             transfer_manager.code_prompt_token_ids[request_id].append(
                 frame.cpu().tolist()
