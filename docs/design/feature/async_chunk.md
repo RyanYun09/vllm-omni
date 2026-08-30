@@ -412,6 +412,7 @@ def my_full_payload(
     is_finished: bool = ...,  # optional: the worker retries without it
 ) -> Any: ...
 
+
 def my_async_chunk(
     *,
     transfer_manager: Any,
