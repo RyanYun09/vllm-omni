@@ -20,6 +20,7 @@ variant is used.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -362,31 +363,19 @@ _ASSISTANT_TOKEN_ID = 77091
 _ASSISTANT_TAIL_LEN = 9  # 3 + 4 + 1 + 1
 
 
-def compute_placeholder_prompt_len(
-    *,
-    ids_or_prompt: Any,
-    mode: str = "full",
-    device: torch.device | str = "cpu",
+def _chat_template_prompt_len(
+    all_ids: Sequence[int],
+    prompt_ids: Sequence[int],
+    device: torch.device | str,
 ) -> int:
-    """Compute the downstream placeholder prompt length.
+    """Qwen chat-template scan: ``sum(user segments) + 9`` (assistant tail).
 
-    ``mode="full"`` replicates the Qwen chat-template scan of
-    ``qwen3_omni._compute_talker_prompt_ids_length``: the input is an
-    ``OmniPayload``-like dict with ``ids: {"all": [...], "prompt": [...]}``,
-    and the length is ``sum(user segments) + 9`` (the assistant tail).
-
-    ``mode="stage0_only"`` is the async-chunk **prewarm** estimate: there is
-    no upstream output yet, so the length is simply the stage-0 input prompt
-    length (``ids_or_prompt`` is a sequence of token ids).
+    Shared by ``mode="full"`` (prompt + generated ids) and ``mode="stage0_only"``
+    (stage-0 ids only, fed to both roles) so the sync forward placeholder and
+    the async-chunk prewarm estimate return the same length.
     """
-    if mode == "stage0_only":
-        return len(list(ids_or_prompt))
-    if mode != "full":
-        raise ValueError(f"unknown mode: {mode!r}")
-
-    ids = (ids_or_prompt or {}).get("ids", {})
-    thinker_sequences = torch.tensor(ids["all"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
-    input_ids = torch.tensor(ids["prompt"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
+    thinker_sequences = torch.tensor(all_ids, dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
+    input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
 
     im_start_indexes = torch.cat(
         [
@@ -413,6 +402,36 @@ def compute_placeholder_prompt_len(
         elif role == _ASSISTANT_TOKEN_ID and i == len(im_start_indexes) - 2:
             assistant_len += _ASSISTANT_TAIL_LEN
     return sum_user_len + assistant_len
+
+
+def compute_placeholder_prompt_len(
+    *,
+    ids_or_prompt: Any,
+    mode: str = "full",
+    device: torch.device | str = "cpu",
+) -> int:
+    """Compute the downstream placeholder prompt length.
+
+    ``mode="full"`` replicates the legacy Qwen chat-template scan: the input is
+    an ``OmniPayload``-like dict with ``ids: {"all": [...], "prompt": [...]}``,
+    and the length is ``sum(user segments) + 9`` (the assistant tail).
+
+    ``mode="stage0_only"`` is the async-chunk **prewarm** estimate.  There is no
+    upstream output yet, so ``ids_or_prompt`` is the stage-0 input token-id list,
+    which is fed to **both** chat-template roles (``all`` / ``prompt``) — exactly
+    what ``adapter.compute_talker_prompt_ids_length`` does.  This makes the
+    prewarm builder and the inline fallback return the same number (15 for the
+    golden prompt; 6 == 6 for a single user segment), removing the
+    ``len()`` vs scan split.
+    """
+    if mode == "stage0_only":
+        prompt = list(ids_or_prompt)
+        return _chat_template_prompt_len(prompt, prompt, device)
+    if mode != "full":
+        raise ValueError(f"unknown mode: {mode!r}")
+
+    ids = (ids_or_prompt or {}).get("ids", {})
+    return _chat_template_prompt_len(ids["all"], ids["prompt"], device)
 
 
 def pack_placeholder_prompt(

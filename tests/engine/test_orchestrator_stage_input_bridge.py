@@ -301,8 +301,10 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
     """RFC #4872 P8b: async-chunk prewarm resolves ``sync_process_input_func``
     (``*_token_only``) to ``build_prewarm_placeholder`` and uses its estimate.
 
-    The placeholder length is ``stage0_only`` = ``len(stage0 prompt_token_ids)``
-    (best-effort; the connector fixup path replaces it later).
+    The placeholder length is ``stage0_only`` = the Qwen chat-template scan on
+    the stage-0 prompt.  The synthetic ``[1, 2]`` prompt has no chat-template
+    marker, so the scan yields 0 and the builder floors it to a 1-token
+    placeholder (best-effort; the connector fixup path replaces it later).
     """
     orchestrator = object.__new__(Orchestrator)
     stage0 = FakePrewarmPool("sender")
@@ -332,8 +334,10 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
 
     assert prewarmed is True
     assert len(stage1.submitted) == 1
-    # build_prewarm_placeholder uses stage0_only = len(stage0 prompt) == 2.
-    assert stage1.submitted[0].prompt_token_ids == [0, 0]
+    # build_prewarm_placeholder uses stage0_only = the chat-template scan on the
+    # stage-0 prompt.  The synthetic [1, 2] prompt has no chat-template marker,
+    # so the scan yields 0 and the builder floors it to a 1-token placeholder.
+    assert stage1.submitted[0].prompt_token_ids == [0]
     orchestrator._record_duplex_stage_submission.assert_called_once_with(
         1,
         "req-prewarm-resolved",

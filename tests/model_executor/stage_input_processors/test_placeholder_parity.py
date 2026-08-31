@@ -14,11 +14,12 @@ Length semantics
 ----------------
 - forward (``mode="full"``) is the Qwen chat-template scan (golden-locked at 15
   for the canonical prompt ``test_common_helpers_golden.py``).
-- prewarm (``mode="stage0_only"``) is a best-effort estimate equal to
-  ``len(stage0_prompt)``; the connector fixup path replaces it with the real
-  length once the upstream chunk arrives.  For a chat-template prompt these
-  differ (15 vs 10); for a single user segment (no trailing assistant marker)
-  they coincide (6 == 6), which is the exact parity the prewarm targets.
+- prewarm (``mode="stage0_only"``) runs the **same** Qwen chat-template scan on
+  the stage-0 input list (feeding it to both ``all``/``prompt`` roles), so the
+  prewarm estimate equals the forward placeholder length and the adapter's
+  streaming-fixup scan (15 == 15 for the golden prompt; 6 == 6 for a single user
+  segment).  The connector fixup path replaces the estimate with the real
+  length once the upstream chunk arrives.
 
 These tests are CPU-only (no model loading).  They run under the local vllm
 stub (shim) and on CI where real vllm builds ``OmniTokensPrompt`` as a dict
@@ -132,7 +133,9 @@ def test_build_prewarm_placeholder_length_from_stage0(monkeypatch):
     )
     assert len(out) == 1
     assert out[0] == "PLACEHOLDER"
-    assert recorded["prompt_len"] == len(GOLDEN_PROMPT)  # 10 (best-effort estimate)
+    # stage0_only runs the chat-template scan on the stage-0 list -> 15
+    # (the same number the forward builder and the adapter scan produce).
+    assert recorded["prompt_len"] == 15
     # Voice metadata is intentionally not forwarded (matches pre-existing prewarm).
     assert recorded["voice_metadata"] is None
 
@@ -141,7 +144,7 @@ def test_build_prewarm_placeholder_accepts_request_like_stage0(monkeypatch):
     recorded = _capture_pack(monkeypatch)
     stage0_request = SimpleNamespace(prompt_token_ids=GOLDEN_PROMPT)
     q3.build_prewarm_placeholder(stage0_prompt=stage0_request, ctx=_ctx(), downstream_stage_id=1)
-    assert recorded["prompt_len"] == len(GOLDEN_PROMPT)
+    assert recorded["prompt_len"] == 15
 
 
 # ---------------------------------------------------------------------------
@@ -162,11 +165,12 @@ def test_forward_prewarm_parity_single_user_segment(monkeypatch):
 def test_forward_prewarm_golden_relationship(monkeypatch):
     """Documented relationship for the chat-template golden prompt.
 
-    forward (full) == 15 (golden-locked); prewarm (stage0_only) == 10
-    (``= len(stage0_prompt)``).  The difference is intentional: prewarm is a
-    best-effort estimate and the connector fixup path
-    (``adapter.construct_next_stage_streaming_input_prompt``) replaces it with
-    the real length once the upstream chunk arrives.
+    forward (full) == 15 (golden-locked); prewarm (stage0_only) is now the
+    **same chat-template scan** on the stage-0 list, so it also returns 15.
+    The builder and the inline fallback
+    (``adapter.compute_talker_prompt_ids_length``) therefore agree — the old
+    ``len(stage0_prompt)`` == 10 estimate under-reserved KV slots and split a
+    single request between 10 and 15 depending on whether resolution succeeded.
     """
     recorded = _capture_pack(monkeypatch)
     q3.build_forward_placeholder(_source_outputs(GOLDEN_PROMPT), _ctx())
@@ -174,8 +178,8 @@ def test_forward_prewarm_golden_relationship(monkeypatch):
     recorded.clear()
     q3.build_prewarm_placeholder(stage0_prompt=GOLDEN_PROMPT, ctx=_ctx(), downstream_stage_id=1)
     assert forward_len == 15
-    assert recorded["prompt_len"] == len(GOLDEN_PROMPT)
-    assert forward_len != recorded["prompt_len"]  # full vs stage0_only estimate
+    assert recorded["prompt_len"] == 15
+    assert forward_len == recorded["prompt_len"]  # full == stage0_only scan
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +234,20 @@ def test_adapter_compute_length_consistent_with_common():
         ids_or_prompt={"ids": {"all": GOLDEN_PROMPT, "prompt": GOLDEN_PROMPT}},
         mode="full",
     )
+    # RFC #4872 P8b: the prewarm stage0_only scan (what build_prewarm_placeholder
+    # and the orchestrator inline fallback both use) must equal the adapter scan.
+    assert adapter.compute_talker_prompt_ids_length(GOLDEN_PROMPT) == _common.compute_placeholder_prompt_len(
+        ids_or_prompt=GOLDEN_PROMPT,
+        mode="stage0_only",
+    )
     assert adapter.compute_talker_prompt_ids_length(SINGLE_USER_PROMPT) == 6
+    assert (
+        _common.compute_placeholder_prompt_len(
+            ids_or_prompt=SINGLE_USER_PROMPT,
+            mode="stage0_only",
+        )
+        == 6
+    )
 
 
 # ---------------------------------------------------------------------------
