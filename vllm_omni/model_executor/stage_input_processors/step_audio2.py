@@ -22,8 +22,8 @@ logger = init_logger(__name__)
 def _ensure_list(x):
     """Convert ConstantList / tensor / iterable to Python list.
 
-    Preserves ``None`` as ``[None]`` (step_audio2 semantics, RFC #4872
-    Step 1c): delegates to ``_common.ensure_list_preserve_none``.
+    Preserves ``None`` as ``[None]`` (step_audio2 semantics): delegates to
+    ``_common.ensure_list_preserve_none``.
     """
     return _common.ensure_list_preserve_none(x)
 

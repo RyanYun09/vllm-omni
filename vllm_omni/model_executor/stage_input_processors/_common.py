@@ -3,19 +3,18 @@
 
 """Canonical, shared helpers for ``stage_input_processors``.
 
-RFC #4872 Proposal 3 / P8a.  These are consolidated implementations of
-helpers that were previously duplicated across model modules with subtle,
-behavioral differences (see ``tests/model_executor/stage_input_processors/
-test_common_helpers_golden.py``, which locks the observed per-module
-behaviour).
+Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
+these are consolidated implementations of helpers that were previously
+duplicated across model modules with subtle behavioral differences (see
+``tests/model_executor/stage_input_processors/test_common_helpers_golden.py``,
+which locks the observed per-module behaviour).
 
-**Consolidation rule:** where two legacy variants disagreed, we do NOT
-silently pick one.  The default implementation follows the most-complete
-semantics; divergent legacy behaviour is preserved through explicit named
-variants (e.g. ``ensure_list_unchanged``) or parameters (e.g.
-``filter_real_code_frames(..., layout=...)``).  A module may only switch to
-``_common`` after its legacy behaviour is golden-locked and the matching
-variant is used.
+**Consolidation rule:** where legacy variants disagreed, the default
+implementation follows the most-complete semantics; divergent legacy behaviour
+is preserved through explicit named variants (e.g. ``ensure_list_unchanged``)
+or parameters (e.g. ``filter_real_code_frames(..., layout=...)``).  A module
+may switch to ``_common`` only after its legacy behaviour is golden-locked and
+the matching variant is used.
 """
 
 from __future__ import annotations
@@ -137,11 +136,11 @@ def ensure_list_preserve_none(x: Any) -> list[Any]:
 def ensure_list_wrap_only(x: Any) -> list[Any]:
     """Wrap-only ``ensure_list``: list passthrough, non-list -> ``[x]``, ``None`` -> ``[]``.
 
-    Preserves the legacy ``diffusion.output_formatter._ensure_list`` semantics
-    (RFC #4872 P3): a non-list primary payload is wrapped as ``[x]``.  Unlike
-    the canonical :func:`ensure_list`, this deliberately performs **no** tensor
-    flattening, no dict-key iteration, and no row-wise iteration of an iterable
-    (e.g. a PIL ``Image``) — a non-``list`` value is wrapped whole, verbatim.
+    Preserves the legacy ``diffusion.output_formatter._ensure_list`` semantics:
+    a non-list primary payload is wrapped as ``[x]``.  Unlike the canonical
+    :func:`ensure_list`, it performs **no** tensor flattening, no dict-key
+    iteration, and no row-wise iteration of an iterable (e.g. a PIL ``Image``) —
+    a non-``list`` value is wrapped whole, verbatim.
     """
     if isinstance(x, list):
         return x
@@ -351,11 +350,11 @@ def extract_last_codec_frame(
 
 
 # ===========================================================================
-# P8a: placeholder prompt length + packing
+# Placeholder prompt length + packing
 # ===========================================================================
 
 # Qwen chat-template sentinel ids (single source within this module; the
-# codec token ids themselves are centralized separately in P6).
+# codec token ids themselves are centralized separately in ``_constants``).
 _IM_START_TOKEN_ID = 151644
 _SYSTEM_TOKEN_ID = 8948
 _USER_TOKEN_ID = 872
@@ -442,8 +441,8 @@ def pack_placeholder_prompt(
     """Pack a KV-slot placeholder prompt: ``[0] * prompt_len`` + voice meta.
 
     Shared by both the sync forward path (``*_token_only``) and the
-    async-chunk prewarm path (Proposal 8b).  Bulk conditioning arrives
-    separately via the connector, so only the length matters here.
+    async-chunk prewarm path.  Bulk conditioning arrives separately via the
+    connector, so only the length matters here.
     """
     return OmniTokensPrompt(
         prompt_token_ids=[0] * max(1, int(prompt_len)),

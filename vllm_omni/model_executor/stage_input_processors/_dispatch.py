@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""RFC #4872 Phase 2 (P1): orchestrator input-dispatch contract layer.
+"""Orchestrator input-dispatch contract layer (RFC #4872).
 
 This module defines the **consumer-side (orchestrator / stage-client) dispatch
 contract** for ``stage_input_processors``.  It replaces the two inconsistent
@@ -32,9 +32,9 @@ Both are collapsed into a single normalization layer:
 is_finished=False``) run inside workers and never receive an
 ``OrchestratorInputContext``; their ``pooling_output`` / ``multimodal_output``
 keyword names are load-bearing parts of the producer contract and are kept
-as-is (RFC P1/P2 keep the producer kwargs contract unchanged).
+as-is (the producer kwargs contract stays unchanged).
 
-Legacy positional shapes normalized here (RFC P1 migration matrix):
+Legacy positional shapes normalized here:
 
 * C0 3-arg: ``(source_outputs, prompt, requires_multimodal_data)``.
 * C2 placeholder: ``(source_outputs, prompt, requires_multimodal_data,
