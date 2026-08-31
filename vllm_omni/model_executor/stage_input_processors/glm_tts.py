@@ -173,7 +173,7 @@ def _extract_last_speech_token(pooling_output: dict[str, Any]) -> int | None:
 def _to_cpu_tensor(value: Any) -> torch.Tensor | None:
     """Convert value to CPU tensor if possible.
 
-    RFC #4872 P3: delegate to the canonical ``_common.to_cpu_tensor``.
+    Delegates to the canonical ``_common.to_cpu_tensor``.
     """
     return _common.to_cpu_tensor(value)
 

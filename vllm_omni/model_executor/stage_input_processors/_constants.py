@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""RFC #4872 P6: canonical cross-model constant definitions.
+"""Canonical cross-model constant definitions (RFC #4872).
 
 Special-token ids that are shared across model pipelines / processors /
 model implementations live here so no module hard-codes a magic number that
@@ -18,5 +18,5 @@ source of truth (see ``qwen3_omni._assert_codec_token_ids_consistent`` and
 
 # Qwen3-family talker codec stop (EOS) token id.  Used as the AR talker
 # stage's ``stop_token_ids`` across the qwen3_omni / qwen3_tts / aura_omni
-# pipelines (three pipeline files shared the literal ``2150`` before P6).
+# pipelines (three pipeline files previously shared the literal ``2150``).
 QWEN3_CODEC_EOS_TOKEN_ID = 2150

@@ -207,7 +207,7 @@ def _resolve_image_patch_token_id(stage: Any) -> int:
 def _ensure_list(x) -> list[int]:
     """Convert ConstantList / tensor-like to plain list.
 
-    RFC #4872 P3: delegate to the canonical ``_common.ensure_list_strict``.
+    Delegates to the canonical ``_common.ensure_list_strict``.
     """
     return _common.ensure_list_strict(x)
 

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""RFC #4872 Phase 3 (Part A): stage-input processor registry.
+"""Stage-input processor registry (RFC #4872).
 
 This module is the **structural validation** layer behind the three ``importlib``
-resolution points that RFC P2 calls out as independent symbol lookups:
+resolution points that are validated as independent symbol lookups:
 
 * ``engine/stage_init_utils.extract_legacy_stage_metadata`` — consumer-side
   (orchestrator) input processors (``custom_process_input_func`` /
@@ -28,8 +28,8 @@ processor rejects the kwarg); ``AsyncChunkProducer`` keeps ``multimodal_output``
 and **must** accept ``is_finished`` — the scheduler always passes it on the
 async-chunk path (see ``chunk_transfer_adapter._send_single_request``).
 
-Kind inference is name-driven (suffix-based), following the RFC P2 naming
-convention documented in :mod:`vllm_omni.model_executor.stage_input_processors`:
+Kind inference is name-driven (suffix-based), following the naming convention
+documented in :mod:`vllm_omni.model_executor.stage_input_processors`:
 
 * ``_token_only``            -> ``placeholder_prompt_builder``
 * ``_full_payload`` / ``_batch`` -> ``producer_full_payload``
@@ -235,7 +235,7 @@ def register_processor(path: str, kind: ProcessorKind) -> None:
     """Register a manual kind override for a processor *path*.
 
     This is an escape hatch for models whose function names do not follow the
-    RFC P2 suffix convention.  ``infer_kind`` consults these overrides before
+    suffix convention.  ``infer_kind`` consults these overrides before
     applying the suffix rules.  Overrides are validated eagerly so typos fail
     fast.
     """
@@ -250,7 +250,7 @@ def infer_kind(fn: Any, *, path: str) -> ProcessorKind:
     """Infer the processor kind from the *suffix* of ``path``.
 
     ``fn`` is accepted for API symmetry with :func:`validate_processor` but the
-    inference is purely name-driven (RFC P2 naming convention); the callable
+    inference is purely name-driven (suffix-based convention); the callable
     object itself is not inspected here.
     """
     del fn  # inference is name-based; kept for a symmetric API

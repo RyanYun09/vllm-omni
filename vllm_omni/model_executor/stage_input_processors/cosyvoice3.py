@@ -38,12 +38,12 @@ def _build_prompt_embed_struct(prompt_payload: dict[str, Any]) -> EmbeddingsStru
 
 
 def _ensure_list(x: Any) -> list[Any]:
-    """Delegate to the canonical shared helper (RFC #4872 Step 1c)."""
+    """Delegate to the canonical shared helper."""
     return _common.ensure_list(x)
 
 
 def _to_token_id_list(value: Any) -> list[int]:
-    """Recursive token-id flattening (cosyvoice3 golden semantics, Step 1c)."""
+    """Recursive token-id flattening (cosyvoice3 golden semantics)."""
     return _common.to_token_id_list(value, recursive=True)
 
 
@@ -63,7 +63,7 @@ def _prompt_speech_token_ids(multi_modal_data: dict[str, Any]) -> list[int]:
 
 
 def _to_cpu_tensor(x: Any) -> torch.Tensor | None:
-    """Delegate to the canonical shared helper (RFC #4872 Step 1c)."""
+    """Delegate to the canonical shared helper."""
     return _common.to_cpu_tensor(x)
 
 

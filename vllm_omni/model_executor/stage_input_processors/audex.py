@@ -45,7 +45,7 @@ _STATE_KEY = "_audex_async_state"
 
 
 def _ensure_list(value: Any) -> list[int]:
-    """RFC #4872 P3: delegate to the canonical ``_common.ensure_list_flatten``."""
+    """Delegate to the canonical ``_common.ensure_list_flatten``."""
     return _common.ensure_list_flatten(value)
 
 
