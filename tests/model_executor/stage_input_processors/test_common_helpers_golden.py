@@ -413,17 +413,21 @@ def test_to_token_id_list_cosyvoice3_recursive_golden():
 
 
 # ===========================================================================
-# P8a: placeholder length helper (qwen3_omni._compute_talker_prompt_ids_length)
+# P8a: placeholder length helper (Qwen chat-template scan).
+# The legacy ``qwen3_omni._compute_talker_prompt_ids_length`` is dead after the
+# P8b consolidation; the canonical ``_common.compute_placeholder_prompt_len``
+# reproduces the golden result.
 # ===========================================================================
 
 
 def test_compute_talker_prompt_ids_length_golden():
-    mod = _import("qwen3_omni")
-    fn = getattr(mod, "_compute_talker_prompt_ids_length")
+    c = _common_import()
     # im_start markers at 0 and 6; user segment len 6, last assistant +9.
     prompt = [151644, 872, 10, 11, 12, 13, 151644, 77091, 20, 21]
     info = {"ids": {"all": prompt, "prompt": prompt}}
-    assert fn(info, device="cpu") == 15
+    assert c.compute_placeholder_prompt_len(ids_or_prompt=info, mode="full", device="cpu") == 15
+    # stage0_only scans the flat stage-0 list (same 15 for the golden prompt).
+    assert c.compute_placeholder_prompt_len(ids_or_prompt=prompt, mode="stage0_only") == 15
 
 
 # ===========================================================================
@@ -552,10 +556,11 @@ def test_common_filter_real_code_frames_matches_golden():
 def test_common_compute_placeholder_prompt_len_matches_golden():
     c = _common_import()
     prompt = [151644, 872, 10, 11, 12, 13, 151644, 77091, 20, 21]
-    # full mode == qwen3_omni._compute_talker_prompt_ids_length golden (15).
+    # full mode == the legacy Qwen chat-template scan golden (15).
     assert c.compute_placeholder_prompt_len(ids_or_prompt={"ids": {"all": prompt, "prompt": prompt}}, mode="full") == 15
-    # stage0_only mode: just the stage-0 input prompt length (prewarm).
-    assert c.compute_placeholder_prompt_len(ids_or_prompt=prompt, mode="stage0_only") == len(prompt)
+    # stage0_only mode: the same scan on the flat stage-0 list (prewarm) -> 15,
+    # so the builder and the inline fallback agree (RFC #4872 P8b).
+    assert c.compute_placeholder_prompt_len(ids_or_prompt=prompt, mode="stage0_only") == 15
 
 
 def test_common_pack_placeholder_prompt():
