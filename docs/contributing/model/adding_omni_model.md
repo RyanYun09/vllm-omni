@@ -490,21 +490,34 @@ implement all three processors for every inter-stage edge — `*_full_payload`,
 required in both modes: in non-async mode it builds the forward placeholder, in
 async mode the orchestrator reuses it to prewarm the downstream stage.
 
-Orchestrator-facing builders follow the C1 contract
-`(source_outputs, ctx: OrchestratorInputContext)`:
+Orchestrator-facing builders are normalized to the C1 contract
+`(source_outputs, ctx: OrchestratorInputContext)` by
+`wrap_orchestrator_processor`. The legacy `*_token_only` shell keeps its
+positional signature for call-site compatibility; the actual C1 entry point is
+the `build_forward_placeholder` / `build_prewarm_placeholder` pair attached to
+the shell (RFC #4872 P8b dual-entry design):
 
 ```python
 # qwen3_omni.py (Thinker → Talker)
 
-from vllm_omni.model_executor.stage_input_processors import OrchestratorInputContext
-
-
 def thinker2talker_token_only(
     source_outputs: list[Any],
-    ctx: OrchestratorInputContext,
+    prompt: OmniTokensPrompt | TextPrompt | None = None,
+    requires_multimodal_data: bool = False,
+    streaming_context: Any | None = None,
 ) -> list[OmniTokensPrompt]:
-    """Allocate talker prefill slots; bulk tensors arrive via the connector."""
+    """Allocate talker prefill slots; bulk tensors arrive via the connector.
+
+    Legacy positional shell (C2). The orchestrator wraps it once via
+    ``wrap_orchestrator_processor``, which forwards the C1
+    ``OrchestratorInputContext`` fields back into the positional arguments.
+    """
     ...
+
+
+# Attached C1 dual-entry builders (RFC #4872 P8b):
+#   thinker2talker_token_only.build_forward_placeholder(source_outputs, ctx)
+#   thinker2talker_token_only.build_prewarm_placeholder(*, stage0_prompt, ctx, ...)
 
 
 def thinker2talker_full_payload(
@@ -529,10 +542,10 @@ def thinker2talker_async_chunk(
     ...
 ```
 
-`OrchestratorInputContext` carries `prompt`, `requires_multimodal_data`,
-`streaming_context` and `sampling_params` (and deliberately has no
-`model_config` field). The producer-side builders (`*_full_payload`,
-`*_async_chunk`) are keyword-only and never receive an
+The `OrchestratorInputContext` carried by the C1 contract has `prompt`,
+`requires_multimodal_data`, `streaming_context` and `sampling_params` (and
+deliberately has no `model_config` field). The producer-side builders
+(`*_full_payload`, `*_async_chunk`) are keyword-only and never receive an
 `OrchestratorInputContext`; `pooling_output` / `multimodal_output` are
 load-bearing keyword names of the connector data plane.
 
