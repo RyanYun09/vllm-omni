@@ -133,6 +133,20 @@ def ensure_list_preserve_none(x: Any) -> list[Any]:
     return list(x) if hasattr(x, "__iter__") else [x]
 
 
+def ensure_list_wrap_only(x: Any) -> list[Any]:
+    """Wrap-only ``ensure_list``: list passthrough, non-list -> ``[x]``, ``None`` -> ``[]``.
+
+    Preserves the legacy ``diffusion.output_formatter._ensure_list`` semantics
+    (RFC #4872 P3): a non-list primary payload is wrapped as ``[x]``.  Unlike
+    the canonical :func:`ensure_list`, this deliberately performs **no** tensor
+    flattening, no dict-key iteration, and no row-wise iteration of an iterable
+    (e.g. a PIL ``Image``) — a non-``list`` value is wrapped whole, verbatim.
+    """
+    if isinstance(x, list):
+        return x
+    return [x] if x is not None else []
+
+
 # ===========================================================================
 # to_cpu_tensor
 # ===========================================================================
