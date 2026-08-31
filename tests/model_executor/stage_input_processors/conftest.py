@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Local-dev import shim for ``vllm_omni`` tests (macOS).
+"""Test-support import fallback for ``vllm_omni`` pure-logic tests.
 
-vllm does not install on macOS, so importing real ``vllm_omni`` submodules
-fails at ``import vllm``.  This conftest installs a *test-only* shim that:
+These unit tests exercise ``vllm_omni`` helper logic without a running vLLM
+runtime.  When the real ``vllm`` package is not installed, importing
+``vllm_omni`` submodules would fail at ``import vllm``; this conftest then
+installs a *test-only* fallback that:
 
 1. Bypasses ``vllm_omni/__init__.py`` (so its ``patch`` / ``transformers``
    machinery is never executed) by pre-inserting a synthetic ``vllm_omni``
@@ -13,9 +15,9 @@ fails at ``import vllm``.  This conftest installs a *test-only* shim that:
 2. Stubs the entire ``vllm`` package tree with permissive ``_Dummy`` classes
    so module-level ``from vllm... import ...`` statements resolve.
 
-The shim is active **only** when real ``vllm`` is not importable (local dev).
-On CI (vllm installed) it is a no-op and the real package is imported, which
-guards against the shim masking genuine import problems.
+The fallback is active **only** when real ``vllm`` is not importable.  When
+vllm is available (e.g. on CI) it is a no-op and the real package is imported,
+which guards against the fallback masking genuine import problems.
 
 Scope: only pure-logic / unit-level tests (no model execution). Any test that
 needs a real vLLM runtime must be marked to run on GPU/NPU CI instead.
@@ -100,10 +102,10 @@ class _StubFinder(importlib.abc.MetaPathFinder):
 
 
 def _install_shim():
-    """Bypass the real vllm_omni/__init__ + stub vllm."""
+    """Bypass the real vllm_omni/__init__ and stub the vllm package tree."""
     if _REPO_ROOT not in sys.path:
         sys.path.insert(0, _REPO_ROOT)
-    # Synthetic vllm_omni parent package (skip the real __init__).
+    # Synthetic vllm_omni parent package (skips the real __init__).
     pkg = types.ModuleType("vllm_omni")
     pkg.__path__ = [_VLLM_OMNI_DIR]
     pkg.__package__ = "vllm_omni"
@@ -114,6 +116,7 @@ def _install_shim():
 
 
 def _activate_if_needed():
+    """Install the import fallback only when real vllm is unavailable."""
     try:
         import vllm  # noqa: F401
     except ModuleNotFoundError:
