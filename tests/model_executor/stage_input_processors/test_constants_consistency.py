@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""RFC #4872 P6: constant-consistency guards.
+"""Constant-consistency guards (RFC #4872).
 
 Verifies that magic special-token ids that were previously duplicated across
 processors / pipelines / model implementations now resolve to a single value:
