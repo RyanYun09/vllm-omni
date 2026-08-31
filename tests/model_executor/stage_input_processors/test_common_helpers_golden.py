@@ -121,6 +121,43 @@ def test_ensure_list_golden(module, inp, expected, expect_typeerror):
     assert _norm(result) == expected
 
 
+def test_output_formatter_ensure_list_wrap_only():
+    """output_formatter._ensure_list keeps wrap-only semantics (RFC #4872 P3).
+
+    The diffusion formatter is NOT a stage-input helper: a non-list primary
+    payload is wrapped as ``[x]`` verbatim — no tensor flattening, no dict-key
+    iteration, no row-wise iteration of an iterable (e.g. a PIL ``Image``).
+    ``_common.ensure_list`` (the processor flatten) must NOT be reused here.
+    """
+    mod = _import("diffusion.output_formatter")
+    fn = getattr(mod, "_ensure_list")
+    assert fn([1, 2]) == [1, 2]
+    assert fn(None) == []
+    assert fn(5) == [5]
+    # A tensor is wrapped whole, NOT flattened via .tolist().
+    t = torch.tensor([1, 2])
+    (wrapped,) = fn(t)
+    assert wrapped is t
+    # A dict is wrapped whole, NOT iterated over its keys.
+    d = {"a": 1}
+    (wrapped_dict,) = fn(d)
+    assert wrapped_dict is d
+
+    # A row-iterable (PIL.Image-like) is wrapped whole, NOT walked row by row.
+    class _RowIterable:
+        def __iter__(self):
+            yield from [[1, 2], [3, 4]]
+
+    img = _RowIterable()
+    (wrapped_img,) = fn(img)
+    assert wrapped_img is img
+    # Contrast: the canonical processor flatten would have flattened each.
+    c = _common_import()
+    assert c.ensure_list(t) == [1, 2]  # flattened, not [t]
+    assert c.ensure_list(d) == ["a"]  # dict keys iterated
+    assert c.ensure_list(img) == [[1, 2], [3, 4]]  # rows walked
+
+
 # ===========================================================================
 # _extract_last_frame
 # ===========================================================================
