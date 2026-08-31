@@ -176,9 +176,9 @@ def test_extract_stage_metadata_defaults_missing_engine_input_source():
 
 
 # ---------------------------------------------------------------------------
-# RFC #4872 P2 / adding-omni: a bad custom_process_input_func must FAIL FAST.
-# extract_legacy_stage_metadata no longer swallows resolve_processor failures
-# and continues with custom_process_input_func=None (which silently fell back to
+# A bad custom_process_input_func must FAIL FAST.  The config-hook resolution
+# path no longer swallows resolve_processor failures and continues with
+# custom_process_input_func=None (which silently fell back to
 # _default_process_engine_inputs).  The worker mixin candidate chain keeps its
 # own skip-on-mismatch tolerance; this is the config-hook resolution path.
 # ---------------------------------------------------------------------------
