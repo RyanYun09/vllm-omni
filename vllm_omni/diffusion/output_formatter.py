@@ -201,8 +201,17 @@ def _stream_metadata_from_diffusion_output(diffusion_output: DiffusionOutput) ->
 
 
 def _ensure_list(outputs: DiffusionPayloadValue) -> list[DiffusionPayloadValue]:
-    """Delegate to the canonical shared helper (RFC #4872 Step 1c)."""
-    return _common.ensure_list(outputs)
+    """Wrap a non-list primary payload as ``[x]`` (diffusion formatter semantics).
+
+    ``output_formatter`` is **not** a stage-input helper: the legacy behaviour
+    was wrap-only — a ``list`` passes through unchanged, a non-list scalar /
+    tensor / PIL ``Image`` is wrapped verbatim as ``[x]``, and ``None`` becomes
+    ``[]``.  The canonical ``_common.ensure_list`` would flatten tensors,
+    iterate dict keys, and walk a PIL ``Image`` row by row, so it must not be
+    reused here; ``_common.ensure_list_wrap_only`` reproduces the exact legacy
+    semantics (RFC #4872 P3).
+    """
+    return _common.ensure_list_wrap_only(outputs)
 
 
 def _primary_payload(postprocess_output: DiffusionPostprocessOutput) -> DiffusionPayloadValue | None:
