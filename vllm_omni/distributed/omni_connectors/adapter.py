@@ -188,11 +188,10 @@ def try_recv_via_connector(
 def compute_talker_prompt_ids_length(prompt_ids: list[int]) -> int:
     """Compute the length of the talker prompt ids.
 
-    RFC #4872 P8b: delegates to the canonical
-    ``_common.compute_placeholder_prompt_len(mode="full")`` so the streaming
-    fixup path (``construct_next_stage_streaming_input_prompt``) and the
-    forward placeholder builder (``build_forward_placeholder``) share one length
-    helper.  Behaviour is golden-locked (``test_common_helpers_golden.py``
+    Delegates to the canonical ``_common.compute_placeholder_prompt_len(mode="full")``
+    so the streaming fixup path (``construct_next_stage_streaming_input_prompt``)
+    and the forward placeholder builder (``build_forward_placeholder``) share one
+    length helper.  Behaviour is golden-locked (``test_common_helpers_golden.py``
     reproduces the 15-token chat-template result for the canonical prompt).
 
     Args:

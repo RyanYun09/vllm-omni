@@ -3,7 +3,8 @@
 
 """Stage input processors: per-model builders for inter-stage transitions.
 
-Module-naming convention (RFC #4872):
+Module-naming convention (RFC #4872,
+https://github.com/vllm-project/vllm-omni/issues/4872):
     - ``*_full_payload`` : producer-side (worker) connector payload builder
       (``FullPayloadProducer``; kwarg ``pooling_output`` load-bearing).
     - ``*_async_chunk``  : producer-side (worker) streaming chunk builder

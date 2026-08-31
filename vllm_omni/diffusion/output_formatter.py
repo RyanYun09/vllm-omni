@@ -209,7 +209,7 @@ def _ensure_list(outputs: DiffusionPayloadValue) -> list[DiffusionPayloadValue]:
     ``[]``.  The canonical ``_common.ensure_list`` would flatten tensors,
     iterate dict keys, and walk a PIL ``Image`` row by row, so it must not be
     reused here; ``_common.ensure_list_wrap_only`` reproduces the exact legacy
-    semantics (RFC #4872 P3).
+    semantics.
     """
     return _common.ensure_list_wrap_only(outputs)
 
