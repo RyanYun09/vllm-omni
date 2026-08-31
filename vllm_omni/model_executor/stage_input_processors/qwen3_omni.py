@@ -720,10 +720,14 @@ def build_prewarm_placeholder(
 
     async-chunk mode has **no upstream ``source_outputs``** yet at prewarm
     time, so this is a best-effort estimate: the placeholder length comes from
-    the stage-0 input prompt (``_common.compute_placeholder_prompt_len(
-    mode="stage0_only")``, i.e. ``len(stage0_prompt)``).  The connector fixup
-    path (``adapter.construct_next_stage_streaming_input_prompt``) replaces
-    this estimate with the real length once the upstream chunk arrives.
+    ``_common.compute_placeholder_prompt_len(mode="stage0_only")``, which runs
+    the **Qwen chat-template scan on the stage-0 input list** (the same scan
+    ``adapter.compute_talker_prompt_ids_length`` runs).  This keeps the prewarm
+    estimate consistent with the sync forward placeholder and the inline
+    fallback (golden prompt: 15 == 15; single user segment: 6 == 6).  The
+    connector fixup path
+    (``adapter.construct_next_stage_streaming_input_prompt``) replaces this
+    estimate with the real length once the upstream chunk arrives.
 
     ``ctx`` / ``downstream_stage_id`` are accepted for contract uniformity;
     voice metadata is intentionally **not** forwarded here (matching the
