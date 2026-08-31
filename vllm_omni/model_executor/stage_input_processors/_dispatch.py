@@ -239,6 +239,14 @@ def _adapt_moss_processor(fn: Any) -> Any:
     return _adapted
 
 
+#: Wrap memo: the signature probe + ``DeprecationWarning`` must happen **once per
+#: processor**, not on every forward.  ``invoke_orchestrator_processor`` runs per
+#: request, and re-wrapping a legacy C2 shape (e.g. ``thinker2talker_token_only``)
+#: would otherwise re-emit the warning on every forward.  Keyed by the callable
+#: object itself (module-level processors are few and live for the process).
+_WRAP_CACHE: dict[Any, Any] = {}
+
+
 def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | DiffusionInputBuilder:
     """Return a C1-compatible callable ``(source_outputs, ctx)`` for ``fn``.
 
@@ -253,48 +261,64 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
         ``ctx.streaming_context``;
       * C0 3-arg ``(source_outputs, prompt, requires_multimodal_data)``.
     Every legacy shape emits a ``DeprecationWarning``.
+
+    The result is memoized per callable (see ``_WRAP_CACHE``): the wrap — and its
+    ``DeprecationWarning`` — happens exactly once per processor, at first
+    resolution/invocation, so ``invoke_orchestrator_processor`` does not re-wrap
+    (or re-warn) on every forward.
     """
     if not callable(fn):
         raise TypeError(f"stage-input processor must be callable, got {fn!r}")
 
+    try:
+        cached = _WRAP_CACHE.get(fn)
+    except TypeError:  # pragma: no cover - unhashable callable (rare)
+        cached = None
+    if cached is not None:
+        return cached  # type: ignore[return-value]
+
     if _accepts_orchestrator_input_context(fn):
-        return fn  # type: ignore[return-value]
+        wrapped: Any = fn
+    else:
+        names = _positional_parameter_names(fn)
 
-    names = _positional_parameter_names(fn)
+        # Uninspectable callable (e.g. builtin): fall back to the most conservative
+        # 3-arg C0 shape; the runtime previously treated it via the <4 arity path.
+        if names is None:
+            names = ["source_outputs", "prompt", "requires_multimodal_data"]
 
-    # Uninspectable callable (e.g. builtin): fall back to the most conservative
-    # 3-arg C0 shape; the runtime previously treated it via the <4 arity path.
-    if names is None:
-        names = ["source_outputs", "prompt", "requires_multimodal_data"]
+        # C4 legacy multi-source (e.g. moss_tts.talker2codec).
+        if len(names) >= 2 and names[0] == "stage_list" and names[1] == "engine_input_source":
+            wrapped = _adapt_moss_processor(fn)
+        # C3 diffusion: forwarding sampling_params (diffusion-stage params).
+        elif "sampling_params" in names:
 
-    # C4 legacy multi-source (e.g. moss_tts.talker2codec).
-    if len(names) >= 2 and names[0] == "stage_list" and names[1] == "engine_input_source":
-        return _adapt_moss_processor(fn)  # type: ignore[return-value]
+            def _c3(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
+                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, sampling_params=ctx.sampling_params)
 
-    # C3 diffusion: forwarding sampling_params (diffusion-stage params).
-    if "sampling_params" in names:
+            _warn_legacy_contract(fn)
+            wrapped = _c3
+        # C2 placeholder: forwarding the streaming context.
+        elif "streaming_context" in names or "_streaming_context" in names:
 
-        def _c3(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-            return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, sampling_params=ctx.sampling_params)
+            def _c2(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
+                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, ctx.streaming_context)
 
-        _warn_legacy_contract(fn)
-        return _c3  # type: ignore[return-value]
+            _warn_legacy_contract(fn)
+            wrapped = _c2
+        else:
+            # C0 3-arg legacy.
+            def _c0(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
+                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data)
 
-    # C2 placeholder: forwarding the streaming context.
-    if "streaming_context" in names or "_streaming_context" in names:
+            _warn_legacy_contract(fn)
+            wrapped = _c0
 
-        def _c2(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-            return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, ctx.streaming_context)
-
-        _warn_legacy_contract(fn)
-        return _c2  # type: ignore[return-value]
-
-    # C0 3-arg legacy.
-    def _c0(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-        return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data)
-
-    _warn_legacy_contract(fn)
-    return _c0  # type: ignore[return-value]
+    try:
+        _WRAP_CACHE[fn] = wrapped
+    except TypeError:  # pragma: no cover - unhashable callable (rare)
+        pass
+    return wrapped  # type: ignore[return-value]
 
 
 def invoke_orchestrator_processor(
