@@ -450,21 +450,17 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
         # RFC #4872 Phase 3 (Part A): resolve through the stage-input processor
         # registry.  expected_kind is deliberately None here — orchestrator-side
         # processors carry no suffix contract, so we rely on suffix inference
-        # only (compatible with existing configs).  A bad path must not kill
-        # startup (M0): warn and continue without the hook.
-        try:
-            custom_process_input_func = resolve_processor(
-                _cpif_path,
-                expected_kind=None,
-                stage_config=stage_config,
-            ).fn
-        except Exception as exc:
-            logger.warning(
-                "[stage_init] Failed to resolve custom_process_input_func %r; "
-                "continuing without it (RFC #4872 M0: warn, not fail): %s",
-                _cpif_path,
-                exc,
-            )
+        # only (compatible with existing configs).  A bad path must **fail fast**
+        # (RFC P2 / adding-omni text): let ProcessorValidationError / ImportError /
+        # AttributeError propagate instead of silently dropping the configured
+        # hook and falling back to ``_default_process_engine_inputs``.  (The
+        # worker-side mixin candidate chain, which *probes* for a ``*_full_payload``
+        # derivative, keeps its own skip-on-mismatch tolerance.)
+        custom_process_input_func = resolve_processor(
+            _cpif_path,
+            expected_kind=None,
+            stage_config=stage_config,
+        ).fn
 
     sync_process_input_func: str | None = None
     _spif_path = _get_attr_or_item(stage_config, "sync_process_input_func")
