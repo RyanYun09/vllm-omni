@@ -742,8 +742,8 @@ def thinker2talker_token_only(
 # path) via ``resolve_processor(...).fn`` and reads ``build_prewarm_placeholder``
 # off the resolved function object.  Expose both dual-entry builders here so
 # that lookup works without a separate module scan.
-thinker2talker_token_only.build_forward_placeholder = build_forward_placeholder
-thinker2talker_token_only.build_prewarm_placeholder = build_prewarm_placeholder
+thinker2talker_token_only.build_forward_placeholder = build_forward_placeholder  # type: ignore[attr-defined]
+thinker2talker_token_only.build_prewarm_placeholder = build_prewarm_placeholder  # type: ignore[attr-defined]
 
 
 # =========================
