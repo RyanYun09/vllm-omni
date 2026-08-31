@@ -456,6 +456,9 @@ class Orchestrator:
         self.async_chunk = bool(async_chunk)
         self.num_stages = len(stage_pools)
         self.stage_pools: list[StagePool] = stage_pools
+        # RFC #4872 M0: wire the dead-processor hint at startup (warn-only) so a
+        # configured-but-never-invoked custom_process_input_func is surfaced.
+        self._warn_dead_input_processors()
         self.log_stats = log_stats
         self._prom_metrics = prom_metrics
         self._stage_replica_waiting: dict[tuple[int, int], int] = {}
@@ -2106,6 +2109,53 @@ class Orchestrator:
         pool = self.stage_pools[stage_id]
         model_config = getattr(pool.stage_vllm_config, "model_config", None)
         return stage_receives_chunks(model_config)
+
+    def _warn_dead_input_processors(self) -> None:
+        """Startup (M0, warn-only) wiring of :func:`dead_processor_hint`.
+
+        For every stage whose ``custom_process_input_func`` would never be
+        invoked under the current async-chunk / sync wiring (mirroring the
+        ``_route_output`` gate ``(not async_chunk or not
+        _stage_receives_async_chunks(stage_id))``), log a warning so a
+        configured-but-dead hook is not silently dropped.  This is a pure hint
+        (RFC #4872 M0 warn-first): the orchestrator never enforces it at runtime.
+        Defensive by design — fake pools / minimal clients in tests or future
+        connectors may not expose ``stage_client``, so the loop never raises.
+        """
+        from vllm_omni.model_executor.stage_input_processors import dead_processor_hint, infer_kind
+
+        for stage_id, pool in enumerate(self.stage_pools):
+            try:
+                client = getattr(pool, "stage_client", None)
+                fn = getattr(client, "custom_process_input_func", None)
+                if fn is None:
+                    continue
+                module = getattr(fn, "__module__", None)
+                name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+                if not module or not name:
+                    continue
+                path = f"{module}.{name}"
+                kind = infer_kind(fn, path=path)
+                has_sync = bool(getattr(client, "sync_process_input_func", None))
+                dead = dead_processor_hint(
+                    kind,
+                    async_chunk=self.async_chunk,
+                    downstream_receives_async_chunks=self._stage_receives_async_chunks(stage_id),
+                    has_sync=has_sync,
+                )
+                if dead:
+                    logger.warning(
+                        "[Orchestrator] stage-%d custom_process_input_func %r is never invoked "
+                        "under the current async-chunk/sync wiring (RFC #4872 M0: dead-processor hint)",
+                        stage_id,
+                        path,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive only
+                logger.debug(
+                    "[Orchestrator] dead-processor hint lookup for stage-%s failed: %s",
+                    stage_id,
+                    exc,
+                )
 
     def _get_stage_input_processor(self, stage_id: int) -> Any:
         processor = self._stage_input_processors.get(stage_id)
