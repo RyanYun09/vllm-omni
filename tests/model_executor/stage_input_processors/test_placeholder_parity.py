@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""P8b parity tests: async-chunk prewarm placeholder vs sync forward placeholder.
+"""Parity tests: async-chunk prewarm placeholder vs sync forward placeholder.
 
-RFC #4872 Proposal 8b: ``*_token_only`` placeholder builders expose a dual entry
-— ``build_forward_placeholder(source_outputs, ctx)`` for the sync forward path
+Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
+``*_token_only`` placeholder builders expose a dual entry —
+``build_forward_placeholder(source_outputs, ctx)`` for the sync forward path
 and ``build_prewarm_placeholder(*, stage0_prompt, ctx, downstream_stage_id)`` for
 the async-chunk prewarm path (no ``source_outputs`` yet).  Both must be fed by
 the same ``_common`` length / packing helpers so async and sync placeholders stay
@@ -21,10 +22,10 @@ Length semantics
   segment).  The connector fixup path replaces the estimate with the real
   length once the upstream chunk arrives.
 
-These tests are CPU-only (no model loading).  They run under the local vllm
-stub (shim) and on CI where real vllm builds ``OmniTokensPrompt`` as a dict
-subclass; length capture uses a ``pack_placeholder_prompt`` spy so it works in
-both environments.
+These tests are CPU-only (no model loading).  They run both without a vllm
+runtime (the import fallback is active) and with real vllm, where
+``OmniTokensPrompt`` is built as a dict subclass; length capture uses a
+``pack_placeholder_prompt`` spy so it works in both environments.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ SINGLE_USER_PROMPT = [151644, 872, 10, 11, 12, 13]
 
 
 def _shim_active() -> bool:
-    """True when the local-dev vllm stub (no real vllm) is in effect."""
+    """True when the test-support import fallback (no real vllm) is active."""
     try:
         import vllm_omni  # noqa: F401
 
@@ -83,7 +84,7 @@ def _capture_pack(monkeypatch):
     ``pack_placeholder_prompt`` is the single packing chokepoint shared by both
     builders, so capturing ``prompt_len`` / ``voice_metadata`` verifies the
     builders' length logic without depending on how ``OmniTokensPrompt`` is
-    constructed (shim vs real vllm).
+    constructed (import fallback vs real vllm).
     """
 
     recorded: dict[str, Any] = {}
@@ -183,7 +184,8 @@ def test_forward_prewarm_golden_relationship(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Packed placeholder structure (real vllm asserts; shim skips field reads).
+# Packed placeholder structure (asserted with real vllm; field reads are
+# skipped under the import fallback).
 # ---------------------------------------------------------------------------
 
 
@@ -191,10 +193,10 @@ def test_pack_placeholder_prompt_structure():
     prompt = _common.pack_placeholder_prompt(prompt_len=4, voice_metadata={"speaker": ["ethan"]})
     empty_meta = _common.pack_placeholder_prompt(prompt_len=1)
     if _shim_active():
-        # Under the local vllm stub, OmniTokensPrompt's real constructor is
-        # bypassed, so field access returns stub values. Field assertions run
-        # on CI where real vllm constructs the model properly.
-        pytest.skip("OmniTokensPrompt field construction needs real vllm (CI)")
+        # Under the import fallback, OmniTokensPrompt's real constructor is
+        # bypassed, so field access returns fallback values. Field assertions
+        # run where real vllm constructs the model properly.
+        pytest.skip("OmniTokensPrompt field construction needs real vllm")
     assert prompt["prompt_token_ids"] == [0, 0, 0, 0]
     assert prompt["additional_information"] == {"speaker": ["ethan"]}
     assert empty_meta["prompt_token_ids"] == [0]
@@ -226,7 +228,7 @@ def test_thinker2talker_token_only_delegates_to_forward_placeholder(monkeypatch)
 
 
 def test_adapter_compute_length_consistent_with_common():
-    # Lazy import keeps this module import-light under the shim.
+    # Lazy import keeps this module import-light without a vllm runtime.
     from vllm_omni.distributed.omni_connectors import adapter
 
     assert adapter.compute_talker_prompt_ids_length(GOLDEN_PROMPT) == 15
@@ -234,8 +236,8 @@ def test_adapter_compute_length_consistent_with_common():
         ids_or_prompt={"ids": {"all": GOLDEN_PROMPT, "prompt": GOLDEN_PROMPT}},
         mode="full",
     )
-    # RFC #4872 P8b: the prewarm stage0_only scan (what build_prewarm_placeholder
-    # and the orchestrator inline fallback both use) must equal the adapter scan.
+    # The prewarm stage0_only scan (what build_prewarm_placeholder and the
+    # orchestrator inline fallback both use) must equal the adapter scan.
     assert adapter.compute_talker_prompt_ids_length(GOLDEN_PROMPT) == _common.compute_placeholder_prompt_len(
         ids_or_prompt=GOLDEN_PROMPT,
         mode="stage0_only",
