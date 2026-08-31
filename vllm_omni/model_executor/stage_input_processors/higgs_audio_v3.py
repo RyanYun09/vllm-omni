@@ -62,8 +62,8 @@ def _empty_code2wav_prompt() -> Any:
 def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:
     """Reverse the MusicGen-style delay pattern (higgs-v3 strict variant).
 
-    RFC #4872 P3: delegate to the canonical ``_common.revert_delay_pattern``
-    with the strict codebook-count and short-input checks.
+    Delegates to the canonical ``_common.revert_delay_pattern`` with the
+    strict codebook-count and short-input checks.
     """
     return _common.revert_delay_pattern(
         audio_codes_qt,
@@ -75,8 +75,8 @@ def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:
 def _filter_real_code_frames(audio_codes_qt: torch.Tensor) -> torch.Tensor:
     """Keep only frames where ALL codebook values are in [0, 1023].
 
-    RFC #4872 P3: delegate to the canonical ``_common.filter_real_code_frames``
-    with the higgs-v3 ``[num_codebooks, num_frames]`` layout.
+    Delegates to the canonical ``_common.filter_real_code_frames`` with the
+    higgs-v3 ``[num_codebooks, num_frames]`` layout.
     """
     return _common.filter_real_code_frames(audio_codes_qt, num_real_codes=_NUM_REAL_CODES, layout="codebooks_first")
 

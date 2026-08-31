@@ -20,7 +20,7 @@ def _to_prompt_dict(prompt_item: OmniTokensPrompt | TextPrompt | str | None) -> 
 
 
 def _to_token_id_list(value: Any) -> list[int]:
-    """RFC #4872 P3: delegate to the canonical ``_common.to_token_id_list``."""
+    """Delegate to the canonical ``_common.to_token_id_list``."""
     return _common.to_token_id_list(value)
 
 

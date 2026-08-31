@@ -138,9 +138,9 @@ class OmniChunkTransferAdapter(OmniTransferAdapterBase):
         self.custom_process_next_stage_input_func: Callable[..., OmniPayloadStruct | None] | None = None
         custom_process_next_stage_input_func = getattr(model_config, "custom_process_next_stage_input_func", None)
         if custom_process_next_stage_input_func:
-            # RFC #4872 Phase 3 (Part A): resolve through the registry with the
-            # async-chunk producer contract.  ``_select_processor_funcs`` already
-            # merged the async_chunk field into this path, so it must be a real
+            # Resolve through the registry with the async-chunk producer
+            # contract.  ``_select_processor_funcs`` already merged the
+            # async_chunk field into this path, so it must be a real
             # ``*_async_chunk`` producer; ``is_finished`` is required (the
             # scheduler always passes it below) — a missing/positional-only
             # declaration is a hard configuration error (ProcessorValidationError).

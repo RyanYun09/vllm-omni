@@ -145,9 +145,9 @@ class StageEngineCoreClientBase(StageClientBase):
             self.prompt_transform_func = metadata.prompt_transform_func
             self.prompt_expand_func = metadata.prompt_expand_func
             self.custom_process_input_func = metadata.custom_process_input_func
-            # RFC #4872 P8b: raw ``sync_process_input_func`` path so the
-            # orchestrator can resolve the async-chunk prewarm placeholder
-            # builder (``build_prewarm_placeholder``) at prewarm time.
+            # Raw ``sync_process_input_func`` path so the orchestrator can
+            # resolve the async-chunk prewarm placeholder builder
+            # (``build_prewarm_placeholder``) at prewarm time.
             self.sync_process_input_func = metadata.sync_process_input_func
 
         self.engine_outputs: Any = None
@@ -398,8 +398,8 @@ class StageEngineCoreClientBase(StageClientBase):
         and the original prompt.
         """
         if self.custom_process_input_func is not None:
-            # RFC #4872 Phase 2 (P1): dispatch through the shared contract layer,
-            # replacing the ad-hoc arity probe (`len(signature.parameters) >= 4`).
+            # Dispatch through the shared contract layer, replacing the ad-hoc
+            # arity probe (`len(signature.parameters) >= 4`).
             from vllm_omni.model_executor.stage_input_processors._dispatch import (
                 OrchestratorInputContext,
                 invoke_orchestrator_processor,

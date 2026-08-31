@@ -2183,10 +2183,10 @@ class OmniConnectorModelRunnerMixin:
                 continue
             tried.add(func_path)
             try:
-                # RFC #4872 Phase 3 (Part A): resolve through the registry with
-                # the full-payload producer contract.  is_finished is optional
-                # here (missing only warns); a structurally incompatible
-                # candidate is skipped so the fallback chain keeps working.
+                # Resolve through the registry with the full-payload producer
+                # contract.  is_finished is optional here (missing only warns);
+                # a structurally incompatible candidate is skipped so the
+                # fallback chain keeps working.
                 spec = resolve_processor(func_path, expected_kind="producer_full_payload")
                 return spec.path, spec.fn
             except ProcessorValidationError as exc:

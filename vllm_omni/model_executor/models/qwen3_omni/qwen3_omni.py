@@ -60,10 +60,10 @@ from vllm_omni.model_executor.models.qwen3_omni.qwen3_omni_moe_thinker import (
 )
 from vllm_omni.model_executor.models.utils import add_prefix_to_loaded_weights, safe_tensor_reshape
 
-# RFC #4872 P6: codec token ids are single-sourced in the stage input
-# processor (``_QWEN3_CODEC_*``); the model keeps the ``TALKER_CODEC_*``
-# aliases for backwards compatibility.  At runtime the talker actually reads
-# them from ``config.talker_config.codec_{pad,bos,eos}``.
+# Codec token ids are single-sourced in the stage input processor
+# (``_QWEN3_CODEC_*``); the model keeps the ``TALKER_CODEC_*`` aliases for
+# backwards compatibility.  At runtime the talker actually reads them from
+# ``config.talker_config.codec_{pad,bos,eos}``.
 from vllm_omni.model_executor.stage_input_processors.qwen3_omni import (
     _QWEN3_CODEC_BOS_TOKEN_ID,
     _QWEN3_CODEC_EOS_TOKEN_ID,
@@ -86,7 +86,7 @@ TTS_EOS_TOKEN_ID = 151673  # <tts_text_eod> (end of dialogue)
 TTS_BOS_SINGLE_TOKEN_ID = 151674  # <tts_text_bos_single>
 
 # Talker codec tokens (talker vocabulary, used for RVQ code generation).
-# RFC #4872 P6: single-sourced from ``stage_input_processors.qwen3_omni``
+# Single-sourced from ``stage_input_processors.qwen3_omni``
 # (``_QWEN3_CODEC_*``); at runtime the talker reads these ids from
 # ``config.talker_config.codec_{pad,bos,eos}`` instead.
 TALKER_CODEC_PAD_TOKEN_ID = _QWEN3_CODEC_PAD_TOKEN_ID  # Padding token

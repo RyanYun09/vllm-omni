@@ -1121,9 +1121,9 @@ class StageConfig:
 
         if self.custom_process_input_func:
             config_dict["custom_process_input_func"] = self.custom_process_input_func
-        # RFC #4872 P8b: carry the raw ``sync_process_input_func`` path to the
-        # orchestrator so async-chunk prewarm can resolve the registered
-        # placeholder builder (``*_token_only``) without re-reading the YAML.
+        # Carry the raw ``sync_process_input_func`` path to the orchestrator so
+        # async-chunk prewarm can resolve the registered placeholder builder
+        # (``*_token_only``) without re-reading the YAML.
         if self.sync_process_input_func:
             config_dict["sync_process_input_func"] = self.sync_process_input_func
 

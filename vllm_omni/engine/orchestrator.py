@@ -456,7 +456,7 @@ class Orchestrator:
         self.async_chunk = bool(async_chunk)
         self.num_stages = len(stage_pools)
         self.stage_pools: list[StagePool] = stage_pools
-        # RFC #4872 M0: wire the dead-processor hint at startup (warn-only) so a
+        # Wire the dead-processor hint at startup (warn-only) so a
         # configured-but-never-invoked custom_process_input_func is surfaced.
         self._warn_dead_input_processors()
         self.log_stats = log_stats
@@ -2118,7 +2118,7 @@ class Orchestrator:
         ``_route_output`` gate ``(not async_chunk or not
         _stage_receives_async_chunks(stage_id))``), log a warning so a
         configured-but-dead hook is not silently dropped.  This is a pure hint
-        (RFC #4872 M0 warn-first): the orchestrator never enforces it at runtime.
+        (warn-first): the orchestrator never enforces it at runtime.
         Defensive by design — fake pools / minimal clients in tests or future
         connectors may not expose ``stage_client``, so the loop never raises.
         """
@@ -2612,8 +2612,8 @@ class Orchestrator:
             if next_client.custom_process_input_func is not None:
                 _t_ar2d = _time.perf_counter()
                 _fn = next_client.custom_process_input_func
-                # RFC #4872 Phase 2 (P1): dispatch through the shared contract
-                # layer, replacing the ad-hoc `sampling_params` name probe.
+                # Dispatch through the shared contract layer, replacing the
+                # ad-hoc `sampling_params` name probe.
                 from vllm_omni.model_executor.stage_input_processors._dispatch import (
                     OrchestratorInputContext,
                     invoke_orchestrator_processor,
@@ -2980,10 +2980,10 @@ class Orchestrator:
                     operation="async-chunk prewarm",
                 )
             else:
-                # RFC #4872 P8b: build the prewarm placeholder through the
-                # registered placeholder builder's ``build_prewarm_placeholder``
-                # (resolved from ``sync_process_input_func``), falling back to
-                # the legacy inline estimate when no builder is available.
+                # Build the prewarm placeholder through the registered
+                # placeholder builder's ``build_prewarm_placeholder`` (resolved
+                # from ``sync_process_input_func``), falling back to the legacy
+                # inline estimate when no builder is available.
                 base_input = self._build_prewarm_placeholder_input(
                     next_stage_id,
                     request_id,
@@ -3045,8 +3045,8 @@ class Orchestrator:
     def _get_prewarm_placeholder_builder(self, stage_id: int) -> Any:
         """Resolve the registered ``build_prewarm_placeholder`` for a stage.
 
-        RFC #4872 P8b: the async-chunk prewarm reuses ``sync_process_input_func``
-        (the ``*_token_only`` path).  Resolution order:
+        The async-chunk prewarm reuses ``sync_process_input_func`` (the
+        ``*_token_only`` path).  Resolution order:
 
         1. ``client.sync_process_input_func`` -> ``resolve_processor(...).fn``
            and read ``build_prewarm_placeholder`` off the resolved function
@@ -3168,8 +3168,8 @@ class Orchestrator:
                     exc,
                 )
 
-        # Legacy inline fallback (RFC #4872 P8b: warn-and-keep-old behaviour so
-        # the prewarm never regresses on models without a dual-entry builder).
+        # Legacy inline fallback (warn-and-keep-old behaviour so the prewarm
+        # never regresses on models without a dual-entry builder).
         from vllm_omni.distributed.omni_connectors.adapter import compute_talker_prompt_ids_length
 
         try:

@@ -376,9 +376,9 @@ class StageMetadata:
     custom_process_input_func: Callable | None
     model_stage: str | None
     runtime_cfg: Any
-    # RFC #4872 P8b: raw ``sync_process_input_func`` path (the ``*_token_only``
-    # placeholder builder) so the orchestrator can resolve
-    # ``build_prewarm_placeholder`` at async-chunk prewarm time.
+    # Raw ``sync_process_input_func`` path (the ``*_token_only`` placeholder
+    # builder) so the orchestrator can resolve ``build_prewarm_placeholder``
+    # at async-chunk prewarm time.
     sync_process_input_func: str | None = None
     prompt_transform_func: Callable | None = None
     prompt_expand_func: Callable | None = None
@@ -447,11 +447,10 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
     custom_process_input_func: Callable | None = None
     _cpif_path = _get_attr_or_item(stage_config, "custom_process_input_func")
     if _cpif_path:
-        # RFC #4872 Phase 3 (Part A): resolve through the stage-input processor
-        # registry.  expected_kind is deliberately None here — orchestrator-side
-        # processors carry no suffix contract, so we rely on suffix inference
-        # only (compatible with existing configs).  A bad path must **fail fast**
-        # (RFC P2 / adding-omni text): let ProcessorValidationError / ImportError /
+        # Resolve through the stage-input processor registry.  expected_kind is
+        # None here — orchestrator-side processors carry no suffix contract, so
+        # we rely on suffix inference only (compatible with existing configs).
+        # A bad path must **fail fast**: let ProcessorValidationError / ImportError /
         # AttributeError propagate instead of silently dropping the configured
         # hook and falling back to ``_default_process_engine_inputs``.  (The
         # worker-side mixin candidate chain, which *probes* for a ``*_full_payload``
@@ -558,7 +557,7 @@ def extract_stage_metadata_from_omni_stage_config(
         **(stage_config.model_config.default_sampling_params or {})
     )
     custom_process_input_func = _resolve_omni_metadata_hook(stage_config.custom_process_input_func)
-    # RFC #4872 P8b: carry the raw sync path for async-chunk prewarm resolution.
+    # Carry the raw sync path for async-chunk prewarm resolution.
     sync_process_input_func: str | None = None
     _spif_path = getattr(stage_config.stage_pipeline_config, "sync_process_input_func", None)
     if _spif_path:

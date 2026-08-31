@@ -53,8 +53,8 @@ _NUM_REAL_CODES = _AUDIO_STREAM_BOS_ID  # codes in [0, 1023] are real
 def _filter_real_code_frames(audio_codes: torch.Tensor) -> torch.Tensor:
     """Keep only frames whose codes are entirely in [0, 1023].
 
-    RFC #4872 P3: delegate to the canonical ``_common.filter_real_code_frames``
-    with the higgs-v2 ``[num_frames, num_codebooks]`` layout.
+    Delegates to the canonical ``_common.filter_real_code_frames`` with the
+    higgs-v2 ``[num_frames, num_codebooks]`` layout.
     """
     return _common.filter_real_code_frames(audio_codes, num_real_codes=_NUM_REAL_CODES, layout="frames_first")
 
@@ -62,8 +62,8 @@ def _filter_real_code_frames(audio_codes: torch.Tensor) -> torch.Tensor:
 def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:
     """Reverse the delay-pattern shift (higgs-v2 lenient variant).
 
-    RFC #4872 P3: delegate to the canonical ``_common.revert_delay_pattern``
-    with ``allow_short=True`` (T < Q returns the input unchanged).
+    Delegates to the canonical ``_common.revert_delay_pattern`` with
+    ``allow_short=True`` (T < Q returns the input unchanged).
     """
     return _common.revert_delay_pattern(audio_codes_qt, allow_short=True)
 
