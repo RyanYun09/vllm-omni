@@ -4,16 +4,19 @@
 """Golden tests that lock the *current* per-module behavior of duplicated
 helper functions in ``stage_input_processors``.
 
-Phase 1a (RFC #4872 Proposal 3): capture behaviour BEFORE introducing
-``_common.py``.  Each case here encodes a deliberately-observed semantic
-delta between modules (None handling, tensor->list, ``ConstantList._x``
-unwrapping, tuple handling, codec-frame validity masks, delay-pattern
-strictness, ...).  ``_common.ensure_list`` (Phase 1b) must pass the same
-cases; do NOT silently "pick one" semantics across variants.
+Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
+these cases capture the observable per-module semantics that were previously
+duplicated across model processors, so a consolidated implementation in
+``_common`` must reproduce the same behavior.  Each case encodes a
+documented semantic difference between modules (None handling, tensor->list,
+``ConstantList._x`` unwrapping, tuple handling, codec-frame validity masks,
+delay-pattern strictness, ...).  The shared helpers in ``_common`` must pass
+the same cases; where legacy variants disagreed, the consolidated behavior is
+preserved through explicit named variants rather than silently normalized.
 
-Modules that cannot be imported in this environment (e.g. ``cosyvoice3`` /
-``step_audio2`` on macOS because of missing deps) are skipped locally and
-run on CI where the real dependencies exist.
+Modules whose optional dependencies are unavailable in the current
+environment are skipped and exercised on CI, where the real dependencies
+exist.
 """
 
 import importlib
@@ -122,7 +125,7 @@ def test_ensure_list_golden(module, inp, expected, expect_typeerror):
 
 
 def test_output_formatter_ensure_list_wrap_only():
-    """output_formatter._ensure_list keeps wrap-only semantics (RFC #4872 P3).
+    """output_formatter._ensure_list keeps wrap-only semantics.
 
     The diffusion formatter is NOT a stage-input helper: a non-list primary
     payload is wrapped as ``[x]`` verbatim — no tensor flattening, no dict-key
@@ -431,7 +434,7 @@ def test_compute_talker_prompt_ids_length_golden():
 
 
 # ===========================================================================
-# Phase 1b: _common.py must reproduce the golden-locked behaviour.
+# The shared _common.py helpers must reproduce the golden-locked behaviour.
 # ===========================================================================
 
 
@@ -445,7 +448,7 @@ def _common_import() -> Any:
 
 
 def _shim_active() -> bool:
-    """True when the local-dev vllm stub (no real vllm) is in effect."""
+    """True when the test-support import fallback (no real vllm) is active."""
     try:
         import vllm_omni  # noqa: F401
 
@@ -559,7 +562,7 @@ def test_common_compute_placeholder_prompt_len_matches_golden():
     # full mode == the legacy Qwen chat-template scan golden (15).
     assert c.compute_placeholder_prompt_len(ids_or_prompt={"ids": {"all": prompt, "prompt": prompt}}, mode="full") == 15
     # stage0_only mode: the same scan on the flat stage-0 list (prewarm) -> 15,
-    # so the builder and the inline fallback agree (RFC #4872 P8b).
+    # so the builder and the inline fallback agree.
     assert c.compute_placeholder_prompt_len(ids_or_prompt=prompt, mode="stage0_only") == 15
 
 
@@ -568,10 +571,10 @@ def test_common_pack_placeholder_prompt():
     prompt = c.pack_placeholder_prompt(prompt_len=4, voice_metadata={"speaker": 1})
     empty_meta = c.pack_placeholder_prompt(prompt_len=1)
     if _shim_active():
-        # Under the local vllm stub, OmniTokensPrompt's real constructor is
-        # bypassed, so field access returns stub values. Field assertions run
-        # on CI where real vllm constructs the model properly.
-        pytest.skip("OmniTokensPrompt field construction needs real vllm (CI)")
+        # Under the import fallback, OmniTokensPrompt's real constructor is
+        # bypassed, so field access returns fallback values. Field assertions
+        # run where real vllm constructs the model properly.
+        pytest.skip("OmniTokensPrompt field construction needs real vllm")
     # Real vllm (0.27) builds OmniTokensPrompt as a dict subclass (MRO
     # ['OmniTokensPrompt', 'dict', 'object']): attribute access is not
     # available, so read the packed fields via dict indexing.

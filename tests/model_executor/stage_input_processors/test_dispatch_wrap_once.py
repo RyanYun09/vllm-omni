@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""RFC #4872 Phase 2 (P1): orchestrator dispatch wrap-once semantics.
+"""Orchestrator dispatch wrap-once semantics (RFC #4872).
 
 ``invoke_orchestrator_processor`` runs per request (and per forward), so
 ``wrap_orchestrator_processor`` must not re-wrap — and must not re-emit the
