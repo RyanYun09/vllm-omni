@@ -50,7 +50,7 @@ _QWEN3_CODEC_EOS_TOKEN_ID = 4198
 
 
 def _assert_codec_token_ids_consistent() -> None:
-    """Fail-fast guard (RFC #4872 P6): codec token ids must not drift.
+    """Fail-fast guard: codec token ids must not drift.
 
     These ids are model-specific special tokens.  The HF config classes are
     the single source of truth at runtime -- the talker reads
@@ -83,10 +83,11 @@ def _assert_codec_token_ids_consistent() -> None:
         )
 
 
-# The P6 fail-fast guard is intentionally **not** run at import time (it pulls in
-# transformers / the in-repo qwen3-tts config and must not break light imports).
-# It is invoked explicitly at model-load startup (qwen3_omni_moe_talker) so the
-# processor constants stay in sync with the HF configs the model actually runs with.
+# The codec-token consistency guard is intentionally **not** run at import time
+# (it pulls in transformers / the in-repo qwen3-tts config and must not break
+# light imports).  It is invoked explicitly at model-load startup
+# (qwen3_omni_moe_talker) so the processor constants stay in sync with the HF
+# configs the model actually runs with.
 def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
     """Fetch layer tensor with tolerant key lookup (str/int)."""
     if not isinstance(layers, dict):
@@ -106,7 +107,7 @@ def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
 def _ensure_list(x):
     """Convert ConstantList / tensor-like to Python list.
 
-    RFC #4872 P3: delegate to the canonical ``_common.ensure_list_unchanged``.
+    Delegates to the canonical ``_common.ensure_list_unchanged``.
     """
     return _common.ensure_list_unchanged(x)
 
@@ -619,7 +620,7 @@ def build_forward_placeholder(
     source_outputs: list[Any],
     ctx: OrchestratorInputContext,
 ) -> list[OmniTokensPrompt]:
-    """Orchestrator-side sync forward placeholder builder (RFC #4872 P8b).
+    """Orchestrator-side sync forward placeholder builder.
 
     Semantics match the legacy ``thinker2talker_token_only`` forward path: one
     placeholder ``OmniTokensPrompt`` per upstream output, sized so the
@@ -627,7 +628,7 @@ def build_forward_placeholder(
     the original prompt so they survive when Stage-0 request metadata is
     unavailable to the connector payload.
 
-    RFC #4872 P8b consolidation: the length computation is delegated to
+    The length computation is delegated to
     ``_common.compute_placeholder_prompt_len(mode="full")`` (the Qwen
     chat-template scan, golden-locked at 15 for the golden prompt) and the
     placeholder packing to ``_common.pack_placeholder_prompt``.
@@ -679,7 +680,7 @@ def build_prewarm_placeholder(
     ctx: OrchestratorInputContext,
     downstream_stage_id: int,
 ) -> list[OmniTokensPrompt]:
-    """Best-effort async-chunk prewarm placeholder builder (RFC #4872 P8b).
+    """Best-effort async-chunk prewarm placeholder builder.
 
     async-chunk mode has **no upstream ``source_outputs``** yet at prewarm
     time, so this is a best-effort estimate: the placeholder length comes from
@@ -695,9 +696,9 @@ def build_prewarm_placeholder(
     ``ctx`` / ``downstream_stage_id`` are accepted for contract uniformity;
     voice metadata is intentionally **not** forwarded here (matching the
     pre-existing prewarm behaviour — no new behaviour is introduced).  Per-edge
-    refinement (``downstream_stage_id``) is RFC #4872 P8c and out of scope.
+    refinement (``downstream_stage_id``) is out of scope.
     """
-    del ctx, downstream_stage_id  # P8b uses only the stage-0 input estimate.
+    del ctx, downstream_stage_id  # Only the stage-0 input estimate is used.
     if hasattr(stage0_prompt, "prompt_token_ids"):
         stage0_prompt = stage0_prompt.prompt_token_ids
     prompt_len = max(
@@ -723,9 +724,9 @@ def thinker2talker_token_only(
     placeholder ``prompt_token_ids`` of the correct length so the scheduler can
     reserve KV-cache slots. It does **not** forward bulk tensors.
 
-    RFC #4872 P8b: thin delegation to :func:`build_forward_placeholder` — the
-    dual-entry design keeps the sync forward path and the async-chunk prewarm
-    path on the same shared ``_common`` length / packing helpers.  ``prompt`` /
+    Thin delegation to :func:`build_forward_placeholder` — the dual-entry design
+    keeps the sync forward path and the async-chunk prewarm path on the same
+    shared ``_common`` length / packing helpers.  ``prompt`` /
     ``requires_multimodal_data`` / ``streaming_context`` are kept for call-site
     signature compatibility; they are folded into an ``OrchestratorInputContext``.
     """
@@ -737,10 +738,10 @@ def thinker2talker_token_only(
     return build_forward_placeholder(source_outputs, ctx)
 
 
-# RFC #4872 P8b: the orchestrator resolves ``sync_process_input_func`` (the
-# ``*_token_only`` path) via ``resolve_processor(...).fn`` and reads
-# ``build_prewarm_placeholder`` off the resolved function object.  Expose both
-# dual-entry builders here so that lookup works without a separate module scan.
+# The orchestrator resolves ``sync_process_input_func`` (the ``*_token_only``
+# path) via ``resolve_processor(...).fn`` and reads ``build_prewarm_placeholder``
+# off the resolved function object.  Expose both dual-entry builders here so
+# that lookup works without a separate module scan.
 thinker2talker_token_only.build_forward_placeholder = build_forward_placeholder
 thinker2talker_token_only.build_prewarm_placeholder = build_prewarm_placeholder
 
