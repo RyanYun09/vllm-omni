@@ -83,10 +83,10 @@ def _assert_codec_token_ids_consistent() -> None:
         )
 
 
-# Single source of truth: keep processor / model impl / HF config in sync.
-_assert_codec_token_ids_consistent()
-
-
+# The P6 fail-fast guard is intentionally **not** run at import time (it pulls in
+# transformers / the in-repo qwen3-tts config and must not break light imports).
+# It is invoked explicitly at model-load startup (qwen3_omni_moe_talker) so the
+# processor constants stay in sync with the HF configs the model actually runs with.
 def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
     """Fetch layer tensor with tolerant key lookup (str/int)."""
     if not isinstance(layers, dict):
@@ -96,43 +96,6 @@ def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
     if val is None:
         val = layers.get(key)
     return val if isinstance(val, torch.Tensor) else None
-
-
-def _compute_talker_prompt_ids_length(info: OmniPayload, device: torch.device | str = "cuda") -> int:
-    im_start_token_id = 151644
-    system_token_id = 8948
-    user_token_id = 872
-    assistant_token_id = 77091
-
-    ids = info.get("ids", {})
-    thinker_sequences = torch.tensor(ids["all"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
-
-    input_ids = torch.tensor(ids["prompt"], dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
-
-    im_start_indexes = torch.cat(
-        [
-            torch.nonzero(input_ids[0] == im_start_token_id).squeeze(1),
-            torch.tensor([thinker_sequences.shape[-1]], device=input_ids.device, dtype=input_ids.dtype),
-        ],
-        dim=0,
-    )
-
-    sum_user_len = 0
-    assistant_len = 0
-    for i in range(len(im_start_indexes) - 1):
-        s = int(im_start_indexes[i].item())
-        e = int(im_start_indexes[i + 1].item())
-        role = int(input_ids[0, s + 1].item())
-        if role == system_token_id:
-            continue
-        elif role == user_token_id:
-            sum_user_len += e - s
-        elif role == assistant_token_id and i == len(im_start_indexes) - 2:
-            assistant_len += 9  # 3 + 4 + 1 + 1
-        else:
-            pass
-
-    return sum_user_len + assistant_len
 
 
 # =========================
