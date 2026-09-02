@@ -43,6 +43,26 @@ def _c1(source_outputs: list[Any], ctx: OrchestratorInputContext):
     return [source_outputs, ctx]
 
 
+def _legacy_c3_keyword_only(source_outputs, prompt=None, requires_multimodal_data=False, *, sampling_params=None):
+    """Legacy C3 shell whose ``sampling_params`` is keyword-only."""
+    return [source_outputs, prompt, requires_multimodal_data, sampling_params]
+
+
+def _legacy_c3_required_keyword_only(source_outputs, prompt=None, requires_multimodal_data=False, *, sampling_params):
+    """Legacy C3 shell with a REQUIRED keyword-only ``sampling_params``."""
+    return [source_outputs, prompt, requires_multimodal_data, sampling_params]
+
+
+def _legacy_c2_other_name(source_outputs, prompt=None, requires_multimodal_data=False, streaming_ctx=None):
+    """Four-positional legacy shell whose streaming param has a non-standard name."""
+    return [source_outputs, prompt, requires_multimodal_data, streaming_ctx]
+
+
+def _legacy_c2_keyword_only(source_outputs, prompt=None, requires_multimodal_data=False, *, streaming_context=None):
+    """Legacy C2 shell whose ``streaming_context`` is keyword-only."""
+    return [source_outputs, prompt, requires_multimodal_data, streaming_context]
+
+
 def _count_deprecation_warnings(trigger) -> int:
     """Run *trigger* under ``simplefilter("always")`` and count DeprecationWarnings."""
     import warnings
@@ -87,3 +107,34 @@ def test_c1_processor_passes_through_without_warning():
     assert invoke_orchestrator_processor(_c1, ["out"], ctx) == [["out"], ctx]
     # No DeprecationWarning for C1 processors at all.
     assert _count_deprecation_warnings(lambda: wrap_orchestrator_processor(_c1)) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1 deep-dive: keyword-only semantic kwargs + four-positional fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_keyword_only_sampling_params_receives_context_value():
+    ctx = OrchestratorInputContext(prompt="p", requires_multimodal_data=True, sampling_params="sp")
+    # ``sampling_params`` is keyword-only: the C3 detection must read the FULL
+    # signature so the diffusion-stage sampling params still reach the shell.
+    assert invoke_orchestrator_processor(_legacy_c3_keyword_only, ["out"], ctx) == [["out"], "p", True, "sp"]
+
+
+def test_required_keyword_only_sampling_params_receives_context_value():
+    ctx = OrchestratorInputContext(prompt="p", requires_multimodal_data=True, sampling_params="sp")
+    # A REQUIRED keyword-only ``sampling_params`` used to raise at runtime
+    # (silently dropped by the old C0 fallback); it must now receive the value.
+    assert invoke_orchestrator_processor(_legacy_c3_required_keyword_only, ["out"], ctx) == [["out"], "p", True, "sp"]
+
+
+def test_four_positional_different_streaming_name_not_regressed():
+    ctx = OrchestratorInputContext(prompt="p", requires_multimodal_data=True, streaming_context="s")
+    # A four-positional legacy shell whose 4th param is named differently from
+    # ``streaming_context`` must still receive it as the 4th positional arg.
+    assert invoke_orchestrator_processor(_legacy_c2_other_name, ["out"], ctx) == [["out"], "p", True, "s"]
+
+
+def test_keyword_only_streaming_context_receives_value():
+    ctx = OrchestratorInputContext(prompt="p", requires_multimodal_data=True, streaming_context="s")
+    assert invoke_orchestrator_processor(_legacy_c2_keyword_only, ["out"], ctx) == [["out"], "p", True, "s"]
