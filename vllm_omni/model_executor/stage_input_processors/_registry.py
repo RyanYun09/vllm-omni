@@ -309,16 +309,6 @@ def _fail(
     )
 
 
-def _second_parameter_name(params: Mapping[str, inspect.Parameter]) -> str | None:
-    """Name of the second (non-var) parameter, mirroring the producer shape."""
-    names = [
-        name
-        for name, param in params.items()
-        if param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-    ]
-    return names[1] if len(names) >= 2 else None
-
-
 def _check_orchestrator_first_param(
     params: Mapping[str, inspect.Parameter],
     *,
@@ -355,6 +345,11 @@ def _check_suffix(
         _warn(path, kind, "suffix_kind_mismatch", f"name {fn_name!r} does not match expected {what}")
 
 
+def _has_var_keyword(params: Mapping[str, inspect.Parameter]) -> bool:
+    """Whether the signature accepts arbitrary keywords (``**kwargs``)."""
+    return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
+
+
 def _check_full_payload_is_finished(
     params: Mapping[str, inspect.Parameter],
     *,
@@ -366,7 +361,10 @@ def _check_full_payload_is_finished(
 
     The worker passes it best-effort and retries without it on
     ``TypeError`` (see ``omni_connector_model_runner_mixin._build_custom_process_payload``).
+    A ``**kwargs`` producer accepts it through ``VAR_KEYWORD``.
     """
+    if _has_var_keyword(params):
+        return  # **kwargs accepts is_finished
     if "is_finished" not in params:
         _warn(
             path,
@@ -395,8 +393,11 @@ def _check_async_chunk_is_finished(
 
     The scheduler always passes ``is_finished`` (see
     ``chunk_transfer_adapter._send_single_request``), so a processor that cannot
-    accept it is a hard configuration error.
+    accept it is a hard configuration error.  A ``**kwargs`` producer accepts it
+    through ``VAR_KEYWORD``.
     """
+    if _has_var_keyword(params):
+        return  # **kwargs accepts is_finished
     if "is_finished" not in params:
         _fail(
             path=path,
@@ -427,6 +428,45 @@ def _check_async_chunk_is_finished(
             "is_finished_default",
             "async-chunk producer declares a required positional-or-keyword 'is_finished'; "
             "prefer keyword-only or a default",
+        )
+
+
+#: Sentinel value for :func:`_check_producer_keyword_bind` probes (the value
+#: itself is never inspected or passed to the processor).
+_BIND_PLACEHOLDER: Any = object()
+
+
+def _check_producer_keyword_bind(
+    signature: inspect.Signature,
+    *,
+    path: str,
+    kind: ProcessorKind,
+    stage_config: Any,
+    required: tuple[str, ...],
+    what: str,
+) -> None:
+    """Bind the exact worker keyword call shape to *signature*.
+
+    The worker invokes producers with a fixed keyword call (see
+    ``omni_connector_model_runner_mixin._build_custom_process_payload`` for the
+    full-payload producer and ``chunk_transfer_adapter._send_single_request``
+    for the async-chunk producer).  We probe that call with
+    ``inspect.Signature.bind`` so a producer that *declares* the right parameter
+    names but cannot actually accept the keyword call — wrong parameter names,
+    positional-only payload parameters, or missing required parameters — is
+    rejected at configuration time instead of failing later when the worker
+    passes ``pooling_output=`` / ``multimodal_output=``.  A ``**kwargs``
+    (``VAR_KEYWORD``) producer accepts any keyword and is therefore compatible.
+    """
+    try:
+        signature.bind(**{name: _BIND_PLACEHOLDER for name in required})
+    except TypeError as exc:
+        _fail(
+            path=path,
+            kind=kind,
+            rule="producer_kwargs",
+            stage_config=stage_config,
+            message=(f"{what} producer does not accept the worker keyword call ({', '.join(required)}): {exc}"),
         )
 
 
@@ -502,74 +542,33 @@ def validate_processor(fn: Any, *, kind: ProcessorKind, path: str, stage_config:
         )
 
     elif kind == "producer_full_payload":
-        if "transfer_manager" not in params:
-            _fail(
-                path=path,
-                kind=kind,
-                rule="transfer_manager",
-                stage_config=stage_config,
-                message="full-payload producer must declare 'transfer_manager'",
-            )
-        if "request" not in params:
-            _fail(
-                path=path,
-                kind=kind,
-                rule="request",
-                stage_config=stage_config,
-                message="full-payload producer must declare 'request'",
-            )
-        second = _second_parameter_name(params)
-        if second == "multimodal_output":
-            _warn(
-                path,
-                kind,
-                "cross_kind_second_param",
-                "second parameter is 'multimodal_output' (async-chunk producer shape) "
-                "but kind is producer_full_payload; expected 'pooling_output'",
-            )
-        elif second is not None and second != "pooling_output":
-            _warn(
-                path,
-                kind,
-                "second_param",
-                f"expected second parameter 'pooling_output', got {second!r}",
-            )
+        # Bind the exact worker keyword call (transfer_manager, pooling_output,
+        # request) so a producer that only *declares* the right names but cannot
+        # accept the keyword call (wrong names / positional-only payload params)
+        # is rejected at config time; **kwargs producers are compatible.
+        _check_producer_keyword_bind(
+            signature,
+            path=path,
+            kind=kind,
+            stage_config=stage_config,
+            required=("transfer_manager", "pooling_output", "request"),
+            what="full-payload",
+        )
         _check_full_payload_is_finished(params, path=path, kind=kind, stage_config=stage_config)
 
     elif kind == "producer_async_chunk":
-        if "transfer_manager" not in params:
-            _fail(
-                path=path,
-                kind=kind,
-                rule="transfer_manager",
-                stage_config=stage_config,
-                message="async-chunk producer must declare 'transfer_manager'",
-            )
-        if "request" not in params:
-            _fail(
-                path=path,
-                kind=kind,
-                rule="request",
-                stage_config=stage_config,
-                message="async-chunk producer must declare 'request'",
-            )
-        second = _second_parameter_name(params)
-        if second == "pooling_output":
-            _warn(
-                path,
-                kind,
-                "cross_kind_second_param",
-                "second parameter is 'pooling_output' (full-payload producer shape) "
-                "but kind is producer_async_chunk; expected 'multimodal_output'",
-            )
-        elif second is not None and second != "multimodal_output":
-            _warn(
-                path,
-                kind,
-                "second_param",
-                f"expected second parameter 'multimodal_output', got {second!r}",
-            )
+        # ``is_finished`` is required and always passed on the async-chunk path;
+        # validate it first so its dedicated rules (is_finished_required /
+        # is_finished_positional_only) fire before the generic keyword bind.
         _check_async_chunk_is_finished(params, path=path, kind=kind, stage_config=stage_config)
+        _check_producer_keyword_bind(
+            signature,
+            path=path,
+            kind=kind,
+            stage_config=stage_config,
+            required=("transfer_manager", "multimodal_output", "request", "is_finished"),
+            what="async-chunk",
+        )
 
     elif kind == "legacy_multi_source":
         if _MOSS_MULTI_SOURCE_MODULE_HINT not in _module_part(path):

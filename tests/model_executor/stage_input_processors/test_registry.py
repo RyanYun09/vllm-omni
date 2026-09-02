@@ -74,6 +74,26 @@ def producer_c_async_chunk(transfer_manager, multimodal_output, request, is_fini
     return None
 
 
+def producer_kwargs_full_payload(**kwargs):
+    return None
+
+
+def producer_kwargs_async_chunk(**kwargs):
+    return None
+
+
+def producer_badname_full_payload(transfer_manager, payload, request, is_finished=False):
+    return None
+
+
+def producer_badname_async_chunk(transfer_manager, payload, request, is_finished=False):
+    return None
+
+
+def producer_positional_full_payload(transfer_manager, pooling_output, request, /):
+    return None
+
+
 def talker2codec_shape(stage_list, engine_input_source, prompt=None, requires_multimodal_data=False):
     return []
 
@@ -153,21 +173,67 @@ class TestValidateProcessor:
                 path="pkg.mod.producer_a_full_payload",
             )
 
-    def test_full_payload_cross_kind_second_param_warns(self):
-        with pytest.warns(RuntimeWarning, match="multimodal_output"):
+    def test_full_payload_cross_kind_second_param_rejected(self):
+        # ``multimodal_output`` instead of ``pooling_output`` cannot bind the
+        # worker keyword call, so this is a hard error (not just a warning).
+        with pytest.raises(ProcessorValidationError) as excinfo:
             validate_processor(
                 producer_c_full_payload,
                 kind="producer_full_payload",
                 path="pkg.mod.producer_c_full_payload",
             )
+        assert excinfo.value.rule == "producer_kwargs"
 
-    def test_full_payload_missing_transfer_manager_fails(self):
-        def bad(manager, pooling_output, request):
-            return None
-
+    def test_full_payload_bad_param_names_rejected(self):
         with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(bad, kind="producer_full_payload", path="pkg.mod.producer_full_payload")
-        assert excinfo.value.rule == "transfer_manager"
+            validate_processor(
+                producer_badname_full_payload,
+                kind="producer_full_payload",
+                path="pkg.mod.producer_badname_full_payload",
+            )
+        assert excinfo.value.rule == "producer_kwargs"
+        assert "pooling_output" in str(excinfo.value)
+
+    def test_full_payload_positional_only_rejected(self):
+        # A positional-only payload parameter cannot accept the worker's
+        # keyword call (``pooling_output=``), so it must be rejected.
+        with pytest.raises(ProcessorValidationError) as excinfo:
+            validate_processor(
+                producer_positional_full_payload,
+                kind="producer_full_payload",
+                path="pkg.mod.producer_positional_full_payload",
+            )
+        assert excinfo.value.rule == "producer_kwargs"
+
+    def test_full_payload_var_keyword_accepted(self):
+        # A ``**kwargs`` producer accepts the exact worker keyword call even
+        # though it declares no explicit names.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            validate_processor(
+                producer_kwargs_full_payload,
+                kind="producer_full_payload",
+                path="pkg.mod.producer_kwargs_full_payload",
+            )
+
+    def test_async_chunk_bad_param_names_rejected(self):
+        with pytest.raises(ProcessorValidationError) as excinfo:
+            validate_processor(
+                producer_badname_async_chunk,
+                kind="producer_async_chunk",
+                path="pkg.mod.producer_badname_async_chunk",
+            )
+        assert excinfo.value.rule == "producer_kwargs"
+        assert "multimodal_output" in str(excinfo.value)
+
+    def test_async_chunk_var_keyword_accepted(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            validate_processor(
+                producer_kwargs_async_chunk,
+                kind="producer_async_chunk",
+                path="pkg.mod.producer_kwargs_async_chunk",
+            )
 
     def test_async_chunk_ok_no_warning(self):
         with warnings.catch_warnings():
