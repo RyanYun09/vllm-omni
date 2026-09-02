@@ -34,15 +34,20 @@ is_finished=False``) run inside workers and never receive an
 keyword names are load-bearing parts of the producer contract and are kept
 as-is (the producer kwargs contract stays unchanged).
 
-Legacy positional shapes normalized here:
+Legacy positional shapes normalized here (detection reads the **full**
+signature, keyword-only parameters included; the final invocation is validated
+with ``inspect.Signature.bind``):
 
 * C0 3-arg: ``(source_outputs, prompt, requires_multimodal_data)``.
 * C2 placeholder: ``(source_outputs, prompt, requires_multimodal_data,
   streaming_context=None)`` (the ``_streaming_context`` variant used by
   ``forced_aligner.code2wav2aligner`` / ``minicpmo_4_5_omni.llm2tts`` is also
-  recognized).
+  recognized; a keyword-only ``*, streaming_context=None`` shell receives the
+  value as a keyword, and any four-positional callable falls back to this
+  shape regardless of the 4th parameter's name).
 * C3 diffusion: ``(source_outputs, prompt, requires_multimodal_data,
-  sampling_params=None)``.
+  sampling_params=None)`` — a keyword-only ``*, sampling_params=None`` shell
+  also receives ``ctx.sampling_params``.
 * C4 legacy multi-source: ``(stage_list, engine_input_source, ...)`` — only
   ``moss_tts.talker2codec`` remains today; normalized by
   ``_adapt_moss_processor``, which binds ``stage_list=source_outputs`` and
@@ -185,22 +190,64 @@ def _accepts_orchestrator_input_context(fn: Any) -> bool:
     return False
 
 
-def _positional_parameter_names(fn: Any) -> list[str] | None:
-    """Names of positional (or positional-or-keyword) parameters of ``fn``.
-
-    Returns ``None`` when the signature cannot be inspected (e.g. builtins).
-    """
+def _legacy_signature(fn: Any) -> inspect.Signature | None:
+    """Best-effort ``inspect.signature`` probe for a callable."""
     try:
-        signature = inspect.signature(fn)
+        return inspect.signature(fn)
     except (TypeError, ValueError):
         return None
-    names: list[str] = []
-    for param in signature.parameters.values():
-        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            names.append(param.name)
-        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
-            names.append("*args")
-    return names
+
+
+def _positional_names(signature: inspect.Signature) -> list[str]:
+    """Names of positional (or positional-or-keyword) parameters."""
+    return [
+        name
+        for name, param in signature.parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+
+
+def _legacy_shape(signature: inspect.Signature | None) -> str:
+    """Classify a legacy positional processor shape.
+
+    The probe reads the **full** signature — keyword-only parameters included —
+    so a ``def f(..., *, sampling_params=None)`` shell is still recognized as a
+    C3 diffusion builder (and receives ``ctx.sampling_params``), and any
+    four-positional callable falls back to the legacy C2 streaming shape
+    regardless of the 4th parameter's name (the legacy arity probe treated every
+    ``>= 4``-parameter callable that way).
+    """
+    if signature is None:
+        return "c0"
+    params = signature.parameters
+    pos_names = _positional_names(signature)
+    if len(pos_names) >= 2 and pos_names[0] == "stage_list" and pos_names[1] == "engine_input_source":
+        return "moss"
+    if "sampling_params" in pos_names:
+        return "c3"
+    if len(pos_names) >= 4:
+        return "c2pos"
+    if "sampling_params" in params:
+        return "c3"
+    if "streaming_context" in params or "_streaming_context" in params:
+        return "c2kw"
+    return "c0"
+
+
+def _bind_invoke(fn: Any, signature: inspect.Signature | None, *args: Any, **kwargs: Any) -> Any:
+    """Invoke *fn* with a legacy call shape bound via ``inspect.Signature.bind``.
+
+    Binding at the final invocation guarantees a legacy adapter never silently
+    drops context fields (e.g. forwarding ``sampling_params`` to a
+    positional-only parameter raises instead of being ignored) and never passes
+    an argument the processor cannot accept.
+    """
+    if signature is None:
+        # Uninspectable callable (e.g. builtin): pass the shape through.
+        return fn(*args, **kwargs)
+    bound = signature.bind(*args, **kwargs)
+    bound.apply_defaults()
+    return fn(*bound.args, **bound.kwargs)
 
 
 def _warn_legacy_contract(fn: Any) -> None:
@@ -220,7 +267,7 @@ def _warn_legacy_contract(fn: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _adapt_moss_processor(fn: Any) -> Any:
+def _adapt_moss_processor(fn: Any, signature: inspect.Signature | None) -> Any:
     """C4 legacy multi-source adapter (e.g. ``moss_tts.talker2codec``).
 
     The legacy multi-source sync processors take
@@ -233,7 +280,7 @@ def _adapt_moss_processor(fn: Any) -> Any:
     """
 
     def _adapted(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-        return fn(source_outputs, ctx.prompt)
+        return _bind_invoke(fn, signature, source_outputs, ctx.prompt)
 
     _warn_legacy_contract(fn)
     return _adapted
@@ -280,39 +327,52 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
     if _accepts_orchestrator_input_context(fn):
         wrapped: Any = fn
     else:
-        names = _positional_parameter_names(fn)
+        signature = _legacy_signature(fn)
+        shape = _legacy_shape(signature)
 
-        # Uninspectable callable (e.g. builtin): fall back to the most conservative
-        # 3-arg C0 shape; the runtime previously treated it via the <4 arity path.
-        if names is None:
-            names = ["source_outputs", "prompt", "requires_multimodal_data"]
-
-        # C4 legacy multi-source (e.g. moss_tts.talker2codec).
-        if len(names) >= 2 and names[0] == "stage_list" and names[1] == "engine_input_source":
-            wrapped = _adapt_moss_processor(fn)
-        # C3 diffusion: forwarding sampling_params (diffusion-stage params).
-        elif "sampling_params" in names:
-
-            def _c3(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, sampling_params=ctx.sampling_params)
-
-            _warn_legacy_contract(fn)
-            wrapped = _c3
-        # C2 placeholder: forwarding the streaming context.
-        elif "streaming_context" in names or "_streaming_context" in names:
-
-            def _c2(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data, ctx.streaming_context)
-
-            _warn_legacy_contract(fn)
-            wrapped = _c2
+        if shape == "moss":
+            wrapped = _adapt_moss_processor(fn, signature)
         else:
-            # C0 3-arg legacy.
-            def _c0(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
-                return fn(source_outputs, ctx.prompt, ctx.requires_multimodal_data)
+
+            def _adapted(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
+                if shape == "c3":
+                    # C3 diffusion: forwarding sampling_params (diffusion-stage
+                    # params).  Read from the full signature so a keyword-only
+                    # ``*, sampling_params=None`` shell receives the value too.
+                    return _bind_invoke(
+                        fn,
+                        signature,
+                        source_outputs,
+                        ctx.prompt,
+                        ctx.requires_multimodal_data,
+                        sampling_params=ctx.sampling_params,
+                    )
+                if shape == "c2pos":
+                    # C2 four-positional legacy fallback (any 4th parameter
+                    # name): the streaming context is the 4th positional arg.
+                    return _bind_invoke(
+                        fn,
+                        signature,
+                        source_outputs,
+                        ctx.prompt,
+                        ctx.requires_multimodal_data,
+                        ctx.streaming_context,
+                    )
+                if shape == "c2kw":
+                    # Keyword-only streaming context shell.
+                    return _bind_invoke(
+                        fn,
+                        signature,
+                        source_outputs,
+                        ctx.prompt,
+                        ctx.requires_multimodal_data,
+                        streaming_context=ctx.streaming_context,
+                    )
+                # C0 3-arg legacy (and the uninspectable / builtin fallback).
+                return _bind_invoke(fn, signature, source_outputs, ctx.prompt, ctx.requires_multimodal_data)
 
             _warn_legacy_contract(fn)
-            wrapped = _c0
+            wrapped = _adapted
 
     try:
         _WRAP_CACHE[fn] = wrapped
