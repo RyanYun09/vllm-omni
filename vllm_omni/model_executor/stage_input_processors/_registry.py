@@ -656,6 +656,7 @@ def dead_processor_hint(
     async_chunk: bool,
     downstream_receives_async_chunks: bool,
     has_sync: bool,
+    custom_is_sync: bool = False,
 ) -> bool:
     """Whether an orchestrator-side ``custom_process_input_func`` is never invoked.
 
@@ -669,7 +670,10 @@ def dead_processor_hint(
       chunks -> the transition still runs forward, so the processor is alive
       (returns ``False``).
     * ``async_chunk=False`` -> forward path is active; the processor is only
-      dead when a ``sync_process_input_func`` overrides it (``has_sync=True``).
+      dead when a *different* ``sync_process_input_func`` overrides it
+      (``has_sync=True`` and ``custom_is_sync=False``).  When the custom hook
+      *is* the selected sync hook (``custom_is_sync=True``) it is the active
+      processor and is **not** dead.
 
     Producer kinds are never orchestrator-side, so they are never "dead" under
     this definition.
@@ -681,4 +685,4 @@ def dead_processor_hint(
         return False
     if async_chunk:
         return bool(downstream_receives_async_chunks)
-    return bool(has_sync)
+    return bool(has_sync) and not custom_is_sync
