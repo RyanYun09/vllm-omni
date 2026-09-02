@@ -413,6 +413,10 @@ def test_to_token_id_list_cosyvoice3_recursive_golden():
     assert fn(None) == []
     assert fn(torch.tensor([[1, 2], [3, 4]])) == [1, 2, 3, 4]
     assert fn(5) == [5]
+    # P2 deep-dive parity: per-item normalization flattens a list containing a
+    # non-scalar tensor and a plain tuple.
+    assert fn([torch.tensor([[4, 5]])]) == [4, 5]
+    assert fn((4, 5)) == [4, 5]
 
 
 # ===========================================================================
@@ -498,6 +502,11 @@ def test_common_to_token_id_list_matches_golden():
     # cosyvoice3 semantics: recursive flatten.
     assert c.to_token_id_list([[1, 2], [3, 4]], recursive=True) == [1, 2, 3, 4]
     assert c.to_token_id_list(torch.tensor([[1, 2], [3, 4]]), recursive=True) == [1, 2, 3, 4]
+    # P2 deep-dive parity: per-item recursion normalizes a list of non-scalar
+    # tensors and a tuple (previously ValueError / TypeError).
+    assert c.to_token_id_list([torch.tensor([[4, 5]])], recursive=True) == [4, 5]
+    assert c.to_token_id_list((4, 5), recursive=True) == [4, 5]
+    assert c.to_token_id_list((torch.tensor(4), torch.tensor([5, 6])), recursive=True) == [4, 5, 6]
 
 
 def test_common_revert_delay_pattern_matches_golden():
