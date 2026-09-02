@@ -473,7 +473,7 @@ YOUR_TTS_PIPELINE = PipelineConfig(
             input_sources=(),
             owns_tokenizer=True,
             engine_output_type="latent",
-            custom_process_next_stage_input_func=f"{_PROC}.ar2decoder",
+            custom_process_next_stage_input_func=f"{_PROC}.ar2decoder_full_payload",
             async_chunk_process_next_stage_input_func=f"{_PROC}.ar2decoder_async_chunk",
         ),
         StagePipelineConfig(
@@ -530,13 +530,13 @@ monolithic function. The suffix convention and the matching registry kind are
 load-bearing:
 
 | Suffix | Registry kind | Runs where | Role |
-|--------|---------------|------------|------|
+| -------- | --------------- | ------------ | ------ |
 | `*_full_payload` | `producer_full_payload` | Worker (producer-side) | `async_chunk=false`; packs the accumulated Stage 0 output and ships it via the connector |
 | `*_async_chunk` | `producer_async_chunk` | Scheduler (producer-side) | `async_chunk=true`; streams one chunk per AR decode step |
 | `*_token_only` | `placeholder_prompt_builder` | Orchestrator (consumer-side) | Allocates downstream KV slots only; bulk tensors arrive via the connector (both modes) |
 
 A model that supports **both** `async_chunk=false` and `async_chunk=true` must
-implement all three processors per edge — `ar2decoder` (full payload),
+implement all three processors per edge — `ar2decoder_full_payload`,
 `ar2decoder_async_chunk` and `ar2decoder_token_only`. The `*_token_only`
 placeholder builder is wired as the downstream stage's `sync_process_input_func`
 and follows the C1 contract `(source_outputs, ctx: OrchestratorInputContext)`:
@@ -585,26 +585,29 @@ Understanding what's available in stage outputs:
     - `multimodal_output` - dict with keys matching your model's `OmniOutput.multimodal_outputs`
     - `prompt_token_ids` - original prompt token IDs
 
-### Batch mode (non-streaming)
+### Batch mode (non-streaming, full payload)
 
-Collects all Stage 0 outputs and forwards them to Stage 1 in one shot:
+Runs on the worker (producer) side for `async_chunk=false`. The connector
+invokes it with the exact keyword contract
+`(transfer_manager, pooling_output, request, ...)` — note that the name must
+carry the `_full_payload` suffix so `infer_kind` resolves it as a
+`producer_full_payload` (an unsuffixed `ar2decoder` would be inferred as
+`legacy_orchestrator_builder` and skipped by the worker's candidate chain):
 
 ```python
-def ar2decoder(
-    stage_list: list[Any],
-    engine_input_source: list[int],
-    prompt: OmniTokensPrompt | TextPrompt | None = None,
-    requires_multimodal_data: bool = False,
-) -> list[OmniTokensPrompt]:
-    source_id = engine_input_source[0]
-    decoder_inputs = []
-
-    for output in stage_list[source_id].engine_outputs:
-        result = output.outputs[0]
-        codes = result.multimodal_output["audio_codes"].cpu()
-        decoder_inputs.append(OmniTokensPrompt(prompt_token_ids=codes.reshape(-1).tolist()))
-
-    return decoder_inputs
+def ar2decoder_full_payload(
+    transfer_manager: Any,
+    pooling_output: dict[str, Any] | None,
+    request: Any,
+    **_: Any,
+) -> dict[str, Any] | None:
+    """Producer: pack the accumulated Stage 0 codec into a connector payload."""
+    del transfer_manager
+    codes = pooling_output.get("codes.audio") if isinstance(pooling_output, dict) else None
+    if codes is None:
+        return None
+    decoder_inputs = OmniTokensPrompt(prompt_token_ids=codes.reshape(-1).tolist())
+    return {"engine_inputs": [decoder_inputs]}
 ```
 
 ### Streaming mode (async_chunk)
