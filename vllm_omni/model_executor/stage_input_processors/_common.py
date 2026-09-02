@@ -179,33 +179,52 @@ def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
 
     ``recursive=False`` (default) matches ``dynin_omni._to_token_id_list``:
     for a 2-D tensor or a nested list only the **first** row / element is
-    used.  ``recursive=True`` matches ``cosyvoice3._to_token_id_list``: all
-    nesting is flattened.
+    used.  ``recursive=True`` matches ``cosyvoice3._to_token_id_list``:
+    per-item recursive normalization — nested ``list``/``tuple`` and
+    non-scalar tensors anywhere in the tree are flattened, so
+    ``[torch.tensor([[4, 5]])]`` -> ``[4, 5]`` and ``(4, 5)`` -> ``[4, 5]``.
     """
+    if recursive:
+        return _to_token_id_list_recursive(value)
     if isinstance(value, torch.Tensor):
         value = value.detach().to("cpu")
         if value.ndim == 0:
             return [int(value.item())]
         if value.ndim > 1:
-            if recursive:
-                value = value.reshape(-1)
-            else:
-                value = value[0]
+            value = value[0]
         return [int(x) for x in value.tolist()]
     if isinstance(value, list):
         if not value:
             return []
         if isinstance(value[0], list):
-            if recursive:
-                out: list[int] = []
-                for item in value:
-                    out.extend(to_token_id_list(item, recursive=True))
-                return out
             return [int(x) for x in value[0]]
         return [int(x) for x in value]
     if value is None:
         return []
     return [int(value)]
+
+
+def _to_token_id_list_recursive(value: Any) -> list[int]:
+    """cosyvoice3 recursive token-id flattening (per-item normalization).
+
+    Mirrors the pre-consolidation ``cosyvoice3._to_token_id_list``: ``None`` ->
+    ``[]``; a tensor is reshaped flat; every item that is a tensor or a
+    ``list``/``tuple`` is recursed into, scalars are converted with ``int()``.
+    """
+    if value is None:
+        return []
+    if isinstance(value, torch.Tensor):
+        value = value.detach().to("cpu").reshape(-1).tolist()
+    out: list[int] = []
+    for item in ensure_list(value):
+        if isinstance(item, torch.Tensor):
+            out.extend(_to_token_id_list_recursive(item))
+            continue
+        if isinstance(item, (list, tuple)):
+            out.extend(_to_token_id_list_recursive(item))
+            continue
+        out.append(int(item))
+    return out
 
 
 # ===========================================================================
