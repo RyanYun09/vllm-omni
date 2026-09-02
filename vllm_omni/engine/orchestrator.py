@@ -139,6 +139,32 @@ def _build_terminal_empty_output(
     )
 
 
+def _custom_hook_is_sync_hook(fn: Any, sync_path: str | None) -> bool:
+    """Whether the custom hook callable *is* the configured sync hook.
+
+    A stage may wire the same ``*_token_only`` processor as both
+    ``custom_process_input_func`` and ``sync_process_input_func`` (the sync hook
+    is pre-selected as the active forward processor).  In that case the custom
+    hook is **not** dead — it is the active processor — so
+    :func:`dead_processor_hint` must not report it.  Comparison is by dotted
+    path first, then by resolving the sync path and identity-checking the
+    callable.  Never raises.
+    """
+    if not callable(fn) or not sync_path:
+        return False
+    module = getattr(fn, "__module__", None)
+    name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+    if module and name and f"{module}.{name}" == sync_path:
+        return True
+    try:
+        from vllm_omni.model_executor.stage_input_processors import resolve_processor
+
+        spec = resolve_processor(sync_path, expected_kind=None)
+        return spec.fn is fn
+    except Exception:
+        return False
+
+
 def build_engine_core_request_from_tokens(
     request_id: str,
     prompt: dict[str, Any],
@@ -2136,12 +2162,18 @@ class Orchestrator:
                     continue
                 path = f"{module}.{name}"
                 kind = infer_kind(fn, path=path)
-                has_sync = bool(getattr(client, "sync_process_input_func", None))
+                sync_path = getattr(client, "sync_process_input_func", None)
+                has_sync = bool(sync_path)
+                # Do not report a hook that *is* the selected sync hook: in
+                # non-async mode the sync ``*_token_only`` processor is the
+                # active custom hook, not a dead leftover.
+                custom_is_sync = _custom_hook_is_sync_hook(fn, sync_path)
                 dead = dead_processor_hint(
                     kind,
                     async_chunk=self.async_chunk,
                     downstream_receives_async_chunks=self._stage_receives_async_chunks(stage_id),
                     has_sync=has_sync,
+                    custom_is_sync=custom_is_sync,
                 )
                 if dead:
                     logger.warning(
@@ -3043,7 +3075,7 @@ class Orchestrator:
         return True
 
     def _get_prewarm_placeholder_builder(self, stage_id: int) -> Any:
-        """Resolve the registered ``build_prewarm_placeholder`` for a stage.
+        """Resolve (and cache per stage) the ``build_prewarm_placeholder``.
 
         The async-chunk prewarm reuses ``sync_process_input_func`` (the
         ``*_token_only`` path).  Resolution order:

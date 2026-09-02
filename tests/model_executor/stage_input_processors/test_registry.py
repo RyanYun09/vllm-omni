@@ -374,6 +374,43 @@ class TestDeadProcessor:
             is True
         )
 
+    def test_sync_mode_selected_sync_hook_is_not_dead(self):
+        # When the custom hook *is* the configured sync hook (the sync
+        # ``*_token_only`` processor was pre-selected as the active forward
+        # hook), it must NOT be reported dead even though ``has_sync`` is true.
+        assert (
+            dead_processor_hint(
+                "placeholder_prompt_builder",
+                async_chunk=False,
+                downstream_receives_async_chunks=False,
+                has_sync=True,
+                custom_is_sync=True,
+            )
+            is False
+        )
+        # A *different* sync hook overriding the custom hook is still dead.
+        assert (
+            dead_processor_hint(
+                "placeholder_prompt_builder",
+                async_chunk=False,
+                downstream_receives_async_chunks=False,
+                has_sync=True,
+                custom_is_sync=False,
+            )
+            is True
+        )
+        # custom_is_sync only affects the non-async (sync-mode) decision.
+        assert (
+            dead_processor_hint(
+                "placeholder_prompt_builder",
+                async_chunk=True,
+                downstream_receives_async_chunks=True,
+                has_sync=True,
+                custom_is_sync=True,
+            )
+            is True
+        )
+
     def test_producer_never_dead(self):
         for kind in ("producer_full_payload", "producer_async_chunk"):
             assert (

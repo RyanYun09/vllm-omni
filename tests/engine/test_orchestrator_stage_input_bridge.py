@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import asyncio
 import queue
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import janus
 import pytest
@@ -441,3 +441,69 @@ async def test_streaming_segment_does_not_complete_final_output_stage() -> None:
     orchestrator._cleanup_request_ids.assert_not_awaited()
     routed = orchestrator.output_async_queue.get_nowait()
     assert routed.finished is False
+
+
+# ---------------------------------------------------------------------------
+# P2 deep-dive: dead-processor hint must not flag the selected sync hook.
+# ---------------------------------------------------------------------------
+
+
+def _prewarm_orchestrator_with_client(client: Any) -> Orchestrator:
+    orch = object.__new__(Orchestrator)
+    orch.stage_pools = [
+        SimpleNamespace(
+            stage_client=client,
+            stage_vllm_config=SimpleNamespace(model_config=SimpleNamespace(max_model_len=64)),
+        )
+    ]
+    return orch
+
+
+def test_warn_dead_input_processors_skips_selected_sync_hook() -> None:
+    """The selected sync hook used as the custom hook is NOT dead.
+
+    In non-async mode a stage wiring the same ``*_token_only`` processor as
+    both ``custom_process_input_func`` and ``sync_process_input_func`` must not
+    be reported as never-invoked (it is the active forward processor).
+    """
+    from vllm_omni.engine import orchestrator as orch_module
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    path = f"{_sync_hook.__module__}.{_sync_hook.__qualname__}"
+
+    class _Client:
+        custom_process_input_func = _sync_hook
+        sync_process_input_func = path
+
+    orch = _prewarm_orchestrator_with_client(_Client())
+    orch.async_chunk = False
+    with patch.object(orch_module.logger, "warning") as mock_warn:
+        orch._warn_dead_input_processors()
+    dead_warnings = [call for call in mock_warn.call_args_list if call.args and "never invoked" in call.args[0]]
+    assert dead_warnings == []
+
+
+def test_warn_dead_input_processors_flags_distinct_sync_hook() -> None:
+    """A custom hook overridden by a *different* sync hook is still reported dead."""
+    from vllm_omni.engine import orchestrator as orch_module
+
+    def _custom_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    path = f"{_sync_hook.__module__}.{_sync_hook.__qualname__}"
+
+    class _Client:
+        custom_process_input_func = _custom_hook
+        sync_process_input_func = path
+
+    orch = _prewarm_orchestrator_with_client(_Client())
+    orch.async_chunk = False
+    with patch.object(orch_module.logger, "warning") as mock_warn:
+        orch._warn_dead_input_processors()
+    dead_warnings = [call for call in mock_warn.call_args_list if call.args and "never invoked" in call.args[0]]
+    assert len(dead_warnings) == 1
