@@ -67,6 +67,11 @@ from vllm_omni.outputs import OmniRequestOutput
 
 logger = init_logger(__name__)
 
+#: Sentinel for a stage whose prewarm placeholder builder has not been resolved.
+_PREWARM_BUILDER_NOT_RESOLVED: Any = object()
+#: Negative sentinel for a stage with no prewarm placeholder builder.
+_PREWARM_BUILDER_NO_BUILDER: Any = object()
+
 
 def cleanup_request_artifact_dirs(artifact_dirs: set[str] | list[str]) -> None:
     for artifact_dir in artifact_dirs:
@@ -482,6 +487,10 @@ class Orchestrator:
         self.async_chunk = bool(async_chunk)
         self.num_stages = len(stage_pools)
         self.stage_pools: list[StagePool] = stage_pools
+        # Per-stage prewarm placeholder builder cache (callable or a negative
+        # sentinel); populated lazily so repeated async requests never re-resolve
+        # (and never re-warn) for models without a builder.
+        self._prewarm_builder_cache: dict[int, Any] = {}
         # Wire the dead-processor hint at startup (warn-only) so a
         # configured-but-never-invoked custom_process_input_func is surfaced.
         self._warn_dead_input_processors()
@@ -3091,56 +3100,73 @@ class Orchestrator:
         raises (fake pools / minimal stage clients in tests and future
         connectors may not expose ``stage_client``), so the prewarm path cannot
         regress on builder resolution.
+
+        The result is cached per stage (the callable on a hit, a negative
+        sentinel on a miss) so repeated async requests never re-run the
+        importlib resolution and never re-emit the fallback warning — Qwen3-TTS
+        and other models without a ``build_prewarm_placeholder`` would otherwise
+        re-resolve and re-warn on every async request.
         """
+        cache = getattr(self, "_prewarm_builder_cache", None)
+        if cache is None:  # object.__new__ test doubles
+            cache = {}
+            self._prewarm_builder_cache = cache
+        cached = cache.get(stage_id, _PREWARM_BUILDER_NOT_RESOLVED)
+        if cached is not _PREWARM_BUILDER_NOT_RESOLVED:
+            return None if cached is _PREWARM_BUILDER_NO_BUILDER else cached
+
         from vllm_omni.model_executor.stage_input_processors import resolve_processor
 
+        builder: Any = None
         try:
             pool = self.stage_pools[stage_id]
             client = getattr(pool, "stage_client", None)
-            if client is None:
-                return None
+            if client is not None:
+                path = getattr(client, "sync_process_input_func", None)
+                if path:
+                    try:
+                        spec = resolve_processor(path, expected_kind=None)
+                        candidate = getattr(spec.fn, "build_prewarm_placeholder", None)
+                        if not callable(candidate):
+                            # Module-level sibling (covers paths whose fn does
+                            # not expose the attribute directly).
+                            import importlib
 
-            path = getattr(client, "sync_process_input_func", None)
-            if path:
-                try:
-                    spec = resolve_processor(path, expected_kind=None)
-                    builder = getattr(spec.fn, "build_prewarm_placeholder", None)
-                    if not callable(builder):
-                        # Module-level sibling (covers paths whose fn does not
-                        # expose the attribute directly).
-                        import importlib
+                            module = importlib.import_module(path.rsplit(".", 1)[0])
+                            candidate = getattr(module, "build_prewarm_placeholder", None)
+                        if callable(candidate):
+                            builder = candidate
+                        else:
+                            logger.warning(
+                                "[Orchestrator] stage-%s sync_process_input_func=%r has no "
+                                "build_prewarm_placeholder; using the inline estimate",
+                                stage_id,
+                                path,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "[Orchestrator] failed to resolve build_prewarm_placeholder "
+                            "for %r (stage-%s); using the inline estimate: %s",
+                            path,
+                            stage_id,
+                            exc,
+                        )
 
-                        module = importlib.import_module(path.rsplit(".", 1)[0])
-                        builder = getattr(module, "build_prewarm_placeholder", None)
-                    if callable(builder):
-                        return builder
-                    logger.warning(
-                        "[Orchestrator] stage-%s sync_process_input_func=%r has no "
-                        "build_prewarm_placeholder; using the inline estimate",
-                        stage_id,
-                        path,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[Orchestrator] failed to resolve build_prewarm_placeholder "
-                        "for %r (stage-%s); using the inline estimate: %s",
-                        path,
-                        stage_id,
-                        exc,
-                    )
-
-            fn = getattr(client, "custom_process_input_func", None)
-            if callable(fn):
-                builder = getattr(fn, "build_prewarm_placeholder", None)
-                if callable(builder):
-                    return builder
+                if builder is None:
+                    fn = getattr(client, "custom_process_input_func", None)
+                    if callable(fn):
+                        candidate = getattr(fn, "build_prewarm_placeholder", None)
+                        if callable(candidate):
+                            builder = candidate
         except Exception as exc:  # pragma: no cover - defensive only
             logger.warning(
                 "[Orchestrator] prewarm placeholder builder lookup for stage-%s failed; using the inline estimate: %s",
                 stage_id,
                 exc,
             )
-        return None
+
+        cache[stage_id] = builder if builder is not None else _PREWARM_BUILDER_NO_BUILDER
+        return builder
 
     def _build_prewarm_placeholder_input(
         self,

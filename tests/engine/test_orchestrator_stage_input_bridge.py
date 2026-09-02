@@ -507,3 +507,79 @@ def test_warn_dead_input_processors_flags_distinct_sync_hook() -> None:
         orch._warn_dead_input_processors()
     dead_warnings = [call for call in mock_warn.call_args_list if call.args and "never invoked" in call.args[0]]
     assert len(dead_warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# P3 deep-dive: prewarm placeholder builder resolution is cached per stage.
+# ---------------------------------------------------------------------------
+
+
+class _FakeProcessorSpec:
+    """Minimal stand-in for ``ProcessorSpec`` with a controllable ``fn``."""
+
+    def __init__(self, fn: Any) -> None:
+        self.path = "fake"
+        self.kind = "placeholder_prompt_builder"
+        self.fn = fn
+
+
+def test_prewarm_builder_resolved_once_and_cached() -> None:
+    """A stage with a builder resolves it once and caches it.
+
+    Repeated async requests must not re-run the importlib resolution or the
+    registry validation.
+    """
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _build_prewarm_placeholder(**kwargs):  # type: ignore[no-untyped-def]
+        return {"prompt_token_ids": [0]}
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    _sync_hook.build_prewarm_placeholder = _build_prewarm_placeholder  # type: ignore[attr-defined]
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _prewarm_orchestrator_with_client(_Client())
+    with patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)) as mock_resolve:
+        first = orch._get_prewarm_placeholder_builder(0)
+        second = orch._get_prewarm_placeholder_builder(0)
+    assert first is _build_prewarm_placeholder
+    assert second is _build_prewarm_placeholder
+    assert mock_resolve.call_count == 1
+
+
+def test_prewarm_builder_miss_warns_once_and_caches() -> None:
+    """A stage WITHOUT a builder resolves once, warns once, then caches a miss.
+
+    Qwen3-TTS and other models have no ``build_prewarm_placeholder``; without
+    per-stage caching every async request re-resolved and re-warned.
+    """
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _prewarm_orchestrator_with_client(_Client())
+    fake_module = SimpleNamespace()
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)) as mock_resolve,
+        patch("importlib.import_module", return_value=fake_module) as mock_import,
+        patch.object(orch_module.logger, "warning") as mock_warn,
+    ):
+        first = orch._get_prewarm_placeholder_builder(0)
+        second = orch._get_prewarm_placeholder_builder(0)
+        third = orch._get_prewarm_placeholder_builder(0)
+    assert first is None
+    assert second is None
+    assert third is None
+    assert mock_resolve.call_count == 1
+    assert mock_import.call_count == 1
+    inline_estimates = [call for call in mock_warn.call_args_list if call.args and "inline estimate" in call.args[0]]
+    assert len(inline_estimates) == 1
