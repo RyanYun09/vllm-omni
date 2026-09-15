@@ -40,7 +40,16 @@ def _common(parser: argparse.ArgumentParser) -> None:
             "rows without identity fail loudly."
         ),
     )
-    parser.add_argument("--split", default="all", help="Restrict to one split (e.g. RTD_OCR) or 'all'.")
+    parser.add_argument(
+        "--split",
+        default="all",
+        help=(
+            "Restrict to one split (e.g. RTD_OCR) or 'all'. A mistyped split name "
+            "raises a clear error listing the splits actually observed in the data. "
+            "Rows from a manifest or an iterable without split/subset/config identity "
+            "keep the requested split as an override rather than being rejected."
+        ),
+    )
     parser.add_argument("--family", choices=("all", "rtd", "pr"), default="all")
     parser.add_argument("--media-root")
     parser.add_argument("--limit", type=int)
@@ -111,6 +120,8 @@ def run(args: argparse.Namespace) -> int:
         limit=args.limit,
         ids=args.ids,
     )
+    if not samples:
+        raise ValueError("no samples selected; check --dataset/--split/--family/--ids/--limit")
     if args.action == "generate":
         if args.concurrency < 1:
             raise ValueError("--concurrency must be at least 1")

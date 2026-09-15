@@ -18,10 +18,19 @@ applied as a filter on each row's preserved ``split``/``subset``/``config``
 identity instead of as a physical split name.  Rows that identify neither their
 split nor their family/task raise a clear error that explains the required
 layout.
+
+A requested ``split`` that matches zero rows (for example a mistyped name) is
+reported loudly: :func:`load_samples` raises a ``ValueError`` that lists the
+split identities actually observed in the loaded rows instead of silently
+returning an empty selection.  Rows coming from a JSON/JSONL manifest or an
+already materialized iterable that carry no split/subset/config identity keep
+the base override behavior: ``--split`` is stamped onto them so they are kept
+rather than rejected.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -129,8 +138,8 @@ class DuplexSample:
     raw: dict[str, Any] | None = None
 
     @classmethod
-    def from_row(cls, row: dict[str, Any], *, split: str | None = None, media_root: Path | None = None) -> DuplexSample:
-        chosen_split = str(split or _value(row, "split", "subset", "config", default=""))
+    def from_row(cls, row: dict[str, Any], *, media_root: Path | None = None) -> DuplexSample:
+        chosen_split = str(_value(row, "split", "subset", "config", default=""))
         sample_id = str(_value(row, "id", "sample_id", "uid", "name", default=""))
         task_value = _value(row, "task_type", "task", "type")
         family_value = _value(row, "family", default="")
@@ -213,6 +222,54 @@ def _stamp_split(rows: Iterable[dict[str, Any]], name: str) -> list[dict[str, An
     return stamped
 
 
+def _override_split(rows: list[dict[str, Any]], split: str | None) -> list[dict[str, Any]]:
+    """Apply the base split-override semantics to manifest/iterable rows.
+
+    Rows that lack split/subset/config identity are stamped with the requested
+    split so they are kept, matching the pre-override behavior; rows that
+    already carry identity are left untouched so the requested split stays a
+    filter. Copies are returned, never mutating the caller's original dicts.
+    """
+    if not split or split == "all":
+        return rows
+    return [row if _has_split_identity(row) else {**row, "split": split} for row in rows]
+
+
+def _recast_media_features(loaded: Any) -> Any:
+    """Recast Audio/Video features to decode=False so rows carry {bytes, path}.
+
+    Hugging Face ``Audio``/``Video`` features default to ``decode=True``,
+    producing ``{"array", "path", "sampling_rate"}`` dicts without the
+    ``bytes`` key that :func:`materialize_media` needs. ``decode=False`` keeps
+    the raw parquet struct instead. Must run before row iteration
+    (``cast_column`` is lazy; decoding happens at row access).
+    """
+    try:
+        features_mod = importlib.import_module("datasets.features")
+    except ImportError:
+        return loaded
+    audio_cls = getattr(features_mod, "Audio", None)
+    video_cls = getattr(features_mod, "Video", None)
+    if audio_cls is None:
+        return loaded
+
+    if isinstance(loaded, dict):
+        # A DatasetDict -- or a plain dict returned by a fake loader whose
+        # values are lists -- recurses one level and is returned untouched by
+        # the features guard below.
+        return {name: _recast_media_features(table) for name, table in loaded.items()}
+
+    feats = getattr(loaded, "features", None)
+    if feats is None:
+        return loaded
+    for column, feature in feats.items():
+        if isinstance(feature, audio_cls):
+            loaded = loaded.cast_column(column, audio_cls(decode=False))
+        elif video_cls is not None and isinstance(feature, video_cls):
+            loaded = loaded.cast_column(column, video_cls(decode=False))
+    return loaded
+
+
 def _read_hf(load_dataset: Callable[..., Any], dataset: str, want: str | None) -> Any:
     """Call ``datasets.load_dataset`` for a local layout or a remote id.
 
@@ -222,8 +279,11 @@ def _read_hf(load_dataset: Callable[..., Any], dataset: str, want: str | None) -
     normalized by :func:`_rows_from_hf`.
     """
     if Path(dataset).suffix.lower() == ".parquet":
-        if want:
-            return load_dataset("parquet", data_files=dataset, split=want)
+        # A single parquet file is always exposed as one generic ``train``
+        # split; the logical benchmark split is filtered from row identity
+        # afterwards. The ``want`` branch was unreachable (the only call site
+        # passes ``None``) and implied physical split support that does not
+        # exist, so it was removed.
         return load_dataset("parquet", data_files=dataset)
     if want:
         return load_dataset(dataset, split=want)
@@ -274,6 +334,7 @@ def _rows_from_hf(dataset: str, *, split: str | None) -> list[dict[str, Any]]:
             loaded = _read_hf(load_dataset, dataset, None)
             requested = None
 
+    loaded = _recast_media_features(loaded)
     if isinstance(loaded, dict):
         rows: list[dict[str, Any]] = []
         for name, table in loaded.items():
@@ -303,7 +364,7 @@ def load_samples(
                 rows = _rows_from_hf(str(path), split=split)
             else:
                 try:
-                    rows = _read_manifest(path)
+                    rows = _override_split(_read_manifest(path), split)
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise ValueError(
                         f"cannot load dataset from {str(path)!r}: expected a "
@@ -313,10 +374,11 @@ def load_samples(
         else:
             rows = _rows_from_hf(str(dataset), split=split)
     else:
-        rows = list(dataset)
+        rows = _override_split(list(dataset), split)
     wanted = set(str(item) for item in ids) if ids else None
     root = Path(media_root).expanduser() if media_root else None
     result = []
+    split_matched = 0
     for row in rows:
         # The requested split is a *filter* over each row's own split identity;
         # never pass it as an override, which would relabel every row as the
@@ -325,11 +387,19 @@ def load_samples(
         sample = DuplexSample.from_row(row, media_root=root)
         if split and split != "all" and sample.split != split:
             continue
+        split_matched += 1
         if family != "all" and sample.family != family:
             continue
         if wanted is not None and sample.id not in wanted:
             continue
         result.append(sample)
+    if split and split != "all" and split_matched == 0 and rows:
+        observed = sorted({str(_value(row, "split", "subset", "config", default="")) or "<none>" for row in rows})
+        raise ValueError(
+            f"--split {split!r} matched zero samples. "
+            f"Split identities observed in the loaded rows: {observed}. "
+            "Check the split name for a typo."
+        )
     if limit is not None:
         result = result[: max(0, limit)]
     return result

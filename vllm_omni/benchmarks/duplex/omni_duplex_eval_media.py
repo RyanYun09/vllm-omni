@@ -37,7 +37,7 @@ def materialize_media(value: Any, output_dir: str | Path, stem: str, suffix: str
     if isinstance(value, str | Path):
         return Path(value)
     path = value.get("path") if isinstance(value, dict) else getattr(value, "path", None)
-    payload = value.get("bytes") if isinstance(value, dict) else None
+    payload = value.get("bytes") if isinstance(value, dict) else getattr(value, "bytes", None)
     if payload is None and isinstance(value, bytes | bytearray):
         payload = value
     if payload is not None:
@@ -60,7 +60,7 @@ def _write_media_bytes(payload: bytes | bytearray, output_dir: str | Path, stem:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     destination = root / f"{stem}{extension}"
-    if destination.exists() and destination.read_bytes() == data:
+    if destination.exists() and destination.stat().st_size == len(data) and destination.read_bytes() == data:
         return destination
     fd, temporary = tempfile.mkstemp(dir=root, prefix=f".{destination.name}.", suffix=".part")
     try:

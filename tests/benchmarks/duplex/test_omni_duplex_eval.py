@@ -312,3 +312,114 @@ def test_frame_sample_content_passes_frames(tmp_path, monkeypatch):
         judge_video_mode="frame-sample",
     )
     assert score["content"]["frame_count"] == 2
+
+
+def test_local_directory_collapsed_train_with_row_identity_and_split_filter(tmp_path):
+    # Reviewer-pointed gap: a collapsed local mirror (data/train-*.parquet)
+    # whose rows carry their own split identity must correctly filter by
+    # --split RTD_OCR.
+    pytest.importorskip("datasets")
+    hf_dir = tmp_path / "Omni-DuplexEval"
+    data_dir = hf_dir / "data"
+    data_dir.mkdir(parents=True)
+    _write_parquet(
+        data_dir / "train-00000-of-00001.parquet",
+        [
+            {"id": "rtd", "split": "RTD_OCR", "question_text": "Read this."},
+            {"id": "pr", "split": "PR_correction", "question_text": "Correct this."},
+        ],
+    )
+    all_samples = load_samples(hf_dir)
+    assert {s.id for s in all_samples} == {"rtd", "pr"}
+    rtd = load_samples(hf_dir, split="RTD_OCR")
+    assert [s.id for s in rtd] == ["rtd"]
+    assert rtd[0].family == "rtd"
+
+
+def test_local_directory_mistyped_split_raises_clear_error(tmp_path):
+    # A named-shard mirror with --split RTD_TYPO must raise ValueError
+    # listing the observed splits instead of silently returning nothing.
+    pytest.importorskip("datasets")
+    hf_dir = tmp_path / "Omni-DuplexEval"
+    data_dir = hf_dir / "data"
+    data_dir.mkdir(parents=True)
+    _write_parquet(
+        data_dir / "RTD_OCR-00000-of-00001.parquet",
+        [{"id": "rtd", "question_text": "Read this."}],
+    )
+    _write_parquet(
+        data_dir / "PR_correction-00000-of-00001.parquet",
+        [{"id": "pr", "question_text": "Correct this."}],
+    )
+    with pytest.raises(ValueError) as exc_info:
+        load_samples(hf_dir, split="RTD_TYPO")
+    message = str(exc_info.value)
+    assert "matched zero" in message
+    assert "RTD_OCR" in message or "PR_correction" in message
+
+
+def test_manifest_without_split_identity_split_override_still_works(tmp_path):
+    # Manifest rows without split/subset/config identity must keep the
+    # base override behaviour: --split RTD_OCR stamps the split so rows
+    # are kept instead of rejected (regression test for P2).
+    manifest = tmp_path / "samples.json"
+    manifest.write_text(
+        json.dumps([{"id": "a", "video": "clip.mp4"}, {"id": "b", "video": "clip2.mp4"}]),
+        encoding="utf-8",
+    )
+    samples = load_samples(manifest, split="RTD_OCR")
+    assert len(samples) == 2
+    assert all(s.split == "RTD_OCR" for s in samples)
+    assert all(s.family == "rtd" for s in samples)
+
+
+def test_iterable_without_split_identity_split_override_still_works():
+    # Iterable rows without split/subset/config identity must keep the
+    # base override behaviour (regression test for F5/P2).
+    data = [{"id": "a", "video": "clip.mp4"}, {"id": "b", "video": "clip2.mp4"}]
+    samples = load_samples(data, split="RTD_OCR")
+    assert len(samples) == 2
+    assert all(s.split == "RTD_OCR" for s in samples)
+    assert all(s.family == "rtd" for s in samples)
+
+
+def test_audio_feature_decode_false_preserves_bytes_key(tmp_path):
+    # When a parquet file carries an Audio feature column, the loader
+    # must recast it with decode=False so rows contain the ``bytes`` key
+    # instead of ``array``/``sampling_rate``.
+    pytest.importorskip("datasets")
+    pytest.importorskip("pyarrow")
+    import pyarrow as pa
+
+    table = pa.table(
+        {
+            "id": pa.array(["a"]),
+            "question_text": pa.array(["Hello"]),
+            "task_type": pa.array(["pr_correction"]),
+            "audio": pa.array([{"bytes": b"\x00\x01\x02", "path": None}]),
+        }
+    )
+    schema = pa.schema(
+        [
+            pa.field("id", pa.string()),
+            pa.field("question_text", pa.string()),
+            pa.field("task_type", pa.string()),
+            pa.field(
+                "audio",
+                pa.struct([pa.field("bytes", pa.binary()), pa.field("path", pa.string())]),
+            ),
+        ]
+    )
+    table = table.cast(schema)
+    parquet = tmp_path / "audio_sample.parquet"
+    pa.parquet.write_table(table, str(parquet))
+
+    samples = load_samples(str(parquet))
+    assert len(samples) == 1
+    raw = samples[0].raw
+    assert raw is not None
+    audio_val = raw.get("audio")
+    assert audio_val is not None
+    # The Audio feature was decoded with decode=False, so the struct
+    # keeps the ``bytes`` key that materialize_media needs.
+    assert isinstance(audio_val, dict) and "bytes" in audio_val
