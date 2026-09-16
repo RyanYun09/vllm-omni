@@ -389,30 +389,27 @@ def test_audio_feature_decode_false_preserves_bytes_key(tmp_path):
     # instead of ``array``/``sampling_rate``.
     pytest.importorskip("datasets")
     pytest.importorskip("pyarrow")
-    import pyarrow as pa
+    import datasets
 
-    table = pa.table(
+    audio_bytes = b"\x00\x01\x02"
+    ds = datasets.Dataset.from_dict(
         {
-            "id": pa.array(["a"]),
-            "question_text": pa.array(["Hello"]),
-            "task_type": pa.array(["pr_correction"]),
-            "audio": pa.array([{"bytes": b"\x00\x01\x02", "path": None}]),
-        }
+            "id": ["a"],
+            "question_text": ["Hello"],
+            "task_type": ["pr_correction"],
+            "audio": [{"bytes": audio_bytes, "path": None}],
+        },
+        features=datasets.Features(
+            {
+                "id": datasets.Value("string"),
+                "question_text": datasets.Value("string"),
+                "task_type": datasets.Value("string"),
+                "audio": datasets.Audio(sampling_rate=16000),
+            }
+        ),
     )
-    schema = pa.schema(
-        [
-            pa.field("id", pa.string()),
-            pa.field("question_text", pa.string()),
-            pa.field("task_type", pa.string()),
-            pa.field(
-                "audio",
-                pa.struct([pa.field("bytes", pa.binary()), pa.field("path", pa.string())]),
-            ),
-        ]
-    )
-    table = table.cast(schema)
     parquet = tmp_path / "audio_sample.parquet"
-    pa.parquet.write_table(table, str(parquet))
+    ds.to_parquet(str(parquet))
 
     samples = load_samples(str(parquet))
     assert len(samples) == 1
@@ -423,3 +420,5 @@ def test_audio_feature_decode_false_preserves_bytes_key(tmp_path):
     # The Audio feature was decoded with decode=False, so the struct
     # keeps the ``bytes`` key that materialize_media needs.
     assert isinstance(audio_val, dict) and "bytes" in audio_val
+    assert audio_val["bytes"] == audio_bytes
+    assert "path" in audio_val
