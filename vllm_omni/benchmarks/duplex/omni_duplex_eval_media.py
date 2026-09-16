@@ -151,8 +151,9 @@ def read_audio_pcm16(path: str | Path) -> bytes:
         if not chunks:
             return b""
         return np.concatenate([chunk.reshape(-1) for chunk in chunks]).astype(np.int16).tobytes()
-    except (OSError, ValueError):
-        return b""
+    except (OSError, ValueError) as exc:
+        logger.warning("Failed to decode audio in %s: %s", source, exc)
+        raise
 
 
 def iter_av_units(

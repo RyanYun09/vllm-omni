@@ -244,11 +244,12 @@ class TestReadAudioPcm16:
         assert abs(len(pcm) - expected) <= 4, f"expected ~{expected} bytes, got {len(pcm)}"
 
     @staticmethod
-    def test_empty_bytes_for_broken_file(tmp_path: Path) -> None:
-        path = tmp_path / "broken.bin"
-        path.write_bytes(b"not a media file")
-        pcm = read_audio_pcm16(path)
-        assert pcm == b""
+    def test_raises_for_broken_file(tmp_path: Path) -> None:
+        """Corrupt audio must raise, not return empty bytes (L1)."""
+        broken = tmp_path / "broken.mp3"
+        broken.write_bytes(b"\x00\x00\x00\x00")
+        with pytest.raises((OSError, ValueError)):
+            read_audio_pcm16(broken)
 
 
 # ---------------------------------------------------------------------------
