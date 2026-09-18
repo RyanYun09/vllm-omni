@@ -9,6 +9,7 @@ Nightly end-to-end scoring regression for [Hothan/Omni-DuplexEval]
 | File | Purpose |
 | ------ | --------- |
 | `test_omni_duplex_eval_ci.py` | Main pytest: hardcoded thresholds + 6 assertions |
+| `test_omni_duplex_eval_ci_mock.py` | CPU mock integration tests (no GPU / model needed) |
 | `omni_duplex_eval_ci_config.json` | Dataset / revision / sample IDs / judge |
 | `conftest.py` | `judge_server` fixture (endpoint resolution only) |
 | `README.md` | This document |
@@ -28,6 +29,26 @@ The `omni_server` fixture boots MiniCPM-o-4_5 with the community duplex
 params (`tests/e2e/online_serving/helpers/minicpmo_4_5_duplex.py`).
 `judge.base_url_env` (default `VLLM_DUPLEX_EVAL_JUDGE_URL`) overrides
 `judge.base_url` from the JSON config.
+
+## CPU mock tests (no GPU / model / judge needed)
+
+`test_omni_duplex_eval_ci_mock.py` drives the *real*
+`test_omni_duplex_eval_ci()` guard on CPU by stubbing the heavy I/O:
+
+- `_run_cli` is replaced by an argv-recording spy (never executes).
+- `resolve_ref_audio` is stubbed to a local path.
+- Fake score files are pre-written under `tmp_path/scores/<split>/` from
+  `sample_ids_per_split` (minus `exclude_ids`), so `summarize_scores()`
+  and the Phase-4 assertions run for real.
+
+It validates the CLI argument assembly (generate + evaluate), the
+score-file-count check, `protocol_pin`, the RTD/PR `by_task` keys, and
+all threshold comparisons — including the failure paths. Runs in CI on
+every PR (`core_model` + `cpu` marks):
+
+```bash
+pytest -v tests/e2e/accuracy/omni_duplex_eval/test_omni_duplex_eval_ci_mock.py
+```
 
 ## Baseline pre-run (Phase A)
 
@@ -52,3 +73,13 @@ enabling the nightly gate:
 4. PR `by_task` keys == 3 PR subtasks
 5. RTD mean content / temporal scores >= thresholds
 6. PR `mean_all_success` >= threshold
+
+## Reference paper & scoring scale
+
+Reference paper: **Omni-DuplexEval** (arXiv:2605.17360). The paper reports
+a 100-point scale, while the evaluation code
+(`vllm_omni/benchmarks/duplex/omni_duplex_eval_metrics.py`) uses a 3-point
+content scale (0.00–3.00), a 0–3 integer temporal scale, and a 0/1 PR
+success flag. The CI thresholds are defined against the **code's** scales
+(the source of truth for `summarize_scores()` output), not the paper's
+100-point scale.
