@@ -43,6 +43,9 @@ pytestmark = [pytest.mark.full_model, pytest.mark.omni]
 _DUPLEX_SERVER_PARAMS = list(DUPLEX_TEST_PARAMS)
 
 
+_RESULT_DIR = Path(__file__).resolve().parent / "results"
+
+
 @hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3"}, num_cards=1)
 @pytest.mark.parametrize("omni_server", _DUPLEX_SERVER_PARAMS, indirect=True)
 def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> None:
@@ -118,8 +121,13 @@ def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> 
     score_files = list(Path(score_root).rglob("*.json"))
     assert len(score_files) == len(sample_ids), f"expected {len(sample_ids)} score files, found {len(score_files)}"
 
-    # Phase 3: Summarize
+    # Phase 3: Summarize + persist result JSON (Buildkite artifact upload pattern)
     summary = summarize_scores(score_root)
+    _RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    result_path = _RESULT_DIR / "summary.json"
+    result_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n[Omni-DuplexEval] summary saved to {result_path}")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
     # Phase 4: Assertions
     assert summary["protocol_pin"] == PROTOCOL_PIN, f"protocol_pin changed: {summary['protocol_pin']} != {PROTOCOL_PIN}"
@@ -156,12 +164,17 @@ _CLI_TIMEOUT = 1800
 
 
 def _run_cli(argv: list[str]) -> None:
-    """Run a CLI command and assert success within timeout."""
+    """Run a CLI command and assert success within timeout.
+    
+    stdout/stderr are printed in real-time (not captured) so CI logs
+    show full generate / evaluate progress — same pattern as PR#6817
+    perf tests (``-s -v`` + ``run_benchmark()``).
+    """
     label = " ".join(argv[:3])
+    print(f"\n[Omni-DuplexEval] Running: {' '.join(argv)}\n", flush=True)
     try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=_CLI_TIMEOUT)
+        result = subprocess.run(argv, capture_output=False, timeout=_CLI_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise AssertionError(f"[{label}] timed out after {_CLI_TIMEOUT}s: {' '.join(argv)}") from None
-    assert result.returncode == 0, (
-        f"[{label}] failed: {' '.join(argv)}\nstdout: {result.stdout[-2000:]}\nstderr: {result.stderr[-2000:]}"
-    )
+    assert result.returncode == 0, f"[{label}] failed (exit code {result.returncode}): {' '.join(argv)}"
+    print(f"\n[Omni-DuplexEval] Done: {label}\n", flush=True)

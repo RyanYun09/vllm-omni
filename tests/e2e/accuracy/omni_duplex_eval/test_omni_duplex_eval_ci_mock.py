@@ -187,6 +187,7 @@ def _call_real_guard(
 
     monkeypatch.setattr(guard, "_run_cli", spy_run_cli)
     monkeypatch.setattr(guard, "resolve_ref_audio", lambda: tmp_path / "ref.wav")
+    monkeypatch.setattr(guard, "_RESULT_DIR", tmp_path)  # write summary.json to tmp_path, not real results/
     guard.test_omni_duplex_eval_ci(fake_server, tmp_path, judge_url)
     return calls
 

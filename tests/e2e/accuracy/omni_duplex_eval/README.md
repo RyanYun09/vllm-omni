@@ -13,6 +13,7 @@ Nightly end-to-end scoring regression for [Hothan/Omni-DuplexEval]
 | `omni_duplex_eval_ci_config.json` | Dataset / revision / sample IDs / judge |
 | `conftest.py` | `judge_server` fixture (endpoint resolution only) |
 | `README.md` | This document |
+| `results/.gitignore` | Track empty results dir for Buildkite artifact upload |
 
 ## Run locally
 
@@ -29,6 +30,18 @@ The `omni_server` fixture boots MiniCPM-o-4_5 with the community duplex
 params (`tests/e2e/online_serving/helpers/minicpmo_4_5_duplex.py`).
 `judge.base_url_env` (default `VLLM_DUPLEX_EVAL_JUDGE_URL`) overrides
 `judge.base_url` from the JSON config.
+
+## Results output
+
+After Phase 3 (summarize), the full `summarize_scores()` dict is persisted
+to `results/summary.json` (same pattern as PR#6817 perf tests) and printed
+to stdout:
+
+- `results/` is tracked in git via `results/.gitignore` (empty dir, nothing
+  committed inside).
+- On Buildkite nightly, the step uploads `results/*.json` as artifacts
+  (`buildkite-agent artifact upload`) even when assertions fail, so a
+  failing run's scores remain downloadable.
 
 ## Judge server
 
