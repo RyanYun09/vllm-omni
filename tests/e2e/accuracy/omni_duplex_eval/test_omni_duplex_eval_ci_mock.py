@@ -23,8 +23,8 @@ Also includes unit tests for the ``judge_server`` fixture endpoint resolution,
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -170,6 +170,19 @@ def _write_scores_from_config(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _FakeServer:
+    """Minimal typed stand-in for the ``omni_server`` fixture.
+
+    Only the read-only attributes the guard touches (host / port / model) are
+    modeled; keeps the CPU-only mock free of the real OmniServer dependency.
+    """
+
+    host: str
+    port: int
+    model: str
+
+
 def _call_real_guard(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, judge_url: str = "http://127.0.0.1:8001"
 ) -> list[list[str]]:
@@ -179,7 +192,7 @@ def _call_real_guard(
     """
     from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
 
-    fake_server = SimpleNamespace(host="127.0.0.1", port=9999, model="mock-model")
+    fake_server = _FakeServer(host="127.0.0.1", port=9999, model="mock-model")
     calls: list[list[str]] = []
 
     def spy_run_cli(argv: list[str]) -> None:
