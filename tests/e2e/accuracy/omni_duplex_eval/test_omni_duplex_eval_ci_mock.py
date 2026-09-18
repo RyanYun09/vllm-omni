@@ -253,7 +253,15 @@ def test_real_guard_uses_dataset_revision_when_set(monkeypatch: pytest.MonkeyPat
 
 
 def test_real_guard_fails_on_low_rtd_content(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Real guard raises when RTD content score is below threshold."""
+    """Real guard raises when RTD content score is below threshold.
+
+    The production thresholds are 0.0 (record mode). We temporarily inject
+    a non-zero threshold to verify the assertion logic still catches low scores.
+    """
+    from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
+
+    monkeypatch.setattr(guard, "_MIN_RTD_MEAN_CONTENT_SCORE", 2.0)
+    monkeypatch.setattr(guard, "_MIN_RTD_MEAN_TEMPORAL_SCORE", 0.0)
     config = _load_config()
     _write_scores_from_config(tmp_path / "scores", config, content_score=1.0, temporal_score=3)
     with pytest.raises(AssertionError, match="RTD content score"):
@@ -261,7 +269,14 @@ def test_real_guard_fails_on_low_rtd_content(monkeypatch: pytest.MonkeyPatch, tm
 
 
 def test_real_guard_fails_on_low_pr_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Real guard raises when PR success rate is below threshold."""
+    """Real guard raises when PR success rate is below threshold.
+
+    The production thresholds are 0.0 (record mode). We temporarily inject
+    a non-zero threshold to verify the assertion logic still catches low scores.
+    """
+    from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
+
+    monkeypatch.setattr(guard, "_MIN_PR_MEAN_ALL_SUCCESS", 0.5)
     config = _load_config()
     _write_scores_from_config(tmp_path / "scores", config, pr_success=False)
     with pytest.raises(AssertionError, match="PR success rate"):

@@ -83,20 +83,27 @@ steps:
           VLLM_DUPLEX_EVAL_JUDGE_URL: "http://127.0.0.1:8001"
         commands:
           # Start judge server (Qwen2.5-VL-7B-Instruct) on the same GPU.
-          # H100 (80 GB) / B200 (144 GB) easily co-locates MiniCPM-o-4_5 (~16 GB
-          # BF16) + Qwen2.5-VL-7B (BF16 ~14 GB, total ~30 GB).
+          # MiniCPM-o-4_5 3-stage pipeline uses ~26 GB actual VRAM.
+          # Qwen2.5-VL-7B-Instruct (BF16 ~14 GB) with gpu_memory_utilization=0.35
+          # budgets 28 GB -> total ~54 GB, safe on H100 (80 GB) / B200 (144 GB).
           # All steps run in ONE shell so $$JUDGE_PID stays in scope for cleanup
           # (Buildkite runs each YAML list item in a separate shell).
           - |
             python -m vllm.entrypoints.openai.api_server \
               --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768 \
-              --trust-remote-code --dtype bfloat16 &
+              --trust-remote-code --dtype bfloat16 --gpu-memory-utilization 0.35 &
             JUDGE_PID=$$!
             # Wait for judge to be ready (up to 5 min)
             for i in $$(seq 1 60); do
               if curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1; then
                 echo "Judge server ready"
                 break
+              fi
+              if [ $$i -eq 60 ]; then
+                echo "ERROR: Judge server failed to start within 5 min"
+                kill $$JUDGE_PID 2>/dev/null || true
+                wait $$JUDGE_PID 2>/dev/null || true
+                exit 1
               fi
               sleep 5
             done

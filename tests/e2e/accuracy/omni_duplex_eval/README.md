@@ -85,23 +85,28 @@ every PR (`core_model` + `cpu` marks):
 pytest -v tests/e2e/accuracy/omni_duplex_eval/test_omni_duplex_eval_ci_mock.py
 ```
 
-## Baseline pre-run (Phase A)
+## Thresholds (record mode → tighten after first nightly run)
 
-Sample IDs in `sample_ids_per_split` are placeholders
-(`RTD_world_knowledge_001`, ...). Replace them with real dataset IDs before
-enabling the nightly gate:
+`sample_ids_per_split` contains real dataset IDs (verified against the
+Hothan/Omni-DuplexEval splits; PR_correction / PR_event_reminder IDs are
+inferred from the split row order and must be re-verified once the dataset
+is reachable). `exclude_ids` has been removed.
 
-1. Pin `dataset_revision` to a known-good commit and run
-   `generate → evaluate → summarize` on the baseline commit
-   `873e9bff7c545c5cda79fdb93a867f09e443b61d`.
-2. Record `summarize_scores()` output (mean content / temporal / success).
-3. Set `_MIN_*` thresholds = `mean - n * std` (start `n=2`) in
-   `test_omni_duplex_eval_ci.py`.
-4. Exclude known bad samples (generate hang / judge failure) via
+All `_MIN_*` thresholds are currently **0.0 (record mode)**: the nightly run
+produces real scores and persists `results/summary.json` without failing the
+gate. Tighten after the first nightly run:
+
+1. Record `summarize_scores()` output (mean content / temporal / success).
+2. Set `_MIN_*` thresholds = `mean - n * std` (start `n=2`) in
+   `test_omni_duplex_eval_ci.py`. As a starting point, the paper's
+   MiniCPM-o 4.5 scores (100-point scale) map to ≈1.15 content / ≈2.40
+   temporal / ≈0.20 PR on the code scales (see "Reference paper" below);
+   ~50% of those is a reasonable lower bound.
+3. If needed, exclude known bad samples (generate hang / judge failure) via
    `exclude_ids`.
 
 Thresholds are bound to the judge model: **switching the judge requires
-re-running steps 1–3**. If the 7B judge shows high variance (small models
+re-running steps 1–2**. If the 7B judge shows high variance (small models
 are more prompt-sensitive), widen `n` (e.g. `n=3`) or increase the sample
 size before tightening.
 

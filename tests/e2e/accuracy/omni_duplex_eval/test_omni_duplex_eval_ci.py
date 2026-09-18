@@ -26,10 +26,14 @@ from vllm_omni.benchmarks.duplex.omni_duplex_eval_metrics import PROTOCOL_PIN
 
 # Thresholds (hardcoded, community accuracy test pattern).
 # baseline commit: 873e9bff7c545c5cda79fdb93a867f09e443b61d
-# TODO: replace placeholders with real values derived from baseline run.
-_MIN_RTD_MEAN_CONTENT_SCORE = 2.40  # 3-point scale (0.00-3.00)
-_MIN_RTD_MEAN_TEMPORAL_SCORE = 2.0  # 0-3 scale
-_MIN_PR_MEAN_ALL_SUCCESS = 0.60  # 0-1 scale
+#
+# RECORD MODE: all thresholds are 0.0 until the first nightly run produces
+# real scores. After that, tighten to ~50% of the measured baseline (paper
+# MiniCPM-o 4.5 on the 100-point scale maps to ~1.15 content / ~2.40
+# temporal / ~0.20 PR on the code scales; see README "Reference paper").
+_MIN_RTD_MEAN_CONTENT_SCORE = 0.0  # 3-point scale (0.00-3.00)
+_MIN_RTD_MEAN_TEMPORAL_SCORE = 0.0  # 0-3 scale
+_MIN_PR_MEAN_ALL_SUCCESS = 0.0  # 0-1 scale
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "omni_duplex_eval_ci_config.json"
 
