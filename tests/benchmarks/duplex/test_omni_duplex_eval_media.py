@@ -101,9 +101,16 @@ class TestVideoDuration:
         assert abs(dur - 2.0) < 0.05, f"expected ~2.0s, got {dur}"
 
     @staticmethod
-    def test_zero_for_invalid_path(tmp_path: Path) -> None:
-        dur = video_duration(tmp_path / "nonexistent.mp4")
-        assert dur == 0.0
+    def test_raises_for_missing_file(tmp_path: Path) -> None:
+        with pytest.raises((OSError, ValueError)):
+            video_duration(tmp_path / "nonexistent.mp4")
+
+    @staticmethod
+    def test_raises_for_broken_file(tmp_path: Path) -> None:
+        broken = tmp_path / "broken.mp4"
+        broken.write_bytes(b"\x00\x00\x00\x00")
+        with pytest.raises((OSError, ValueError)):
+            video_duration(broken)
 
 
 # ---------------------------------------------------------------------------

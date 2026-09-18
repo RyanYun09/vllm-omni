@@ -80,7 +80,13 @@ def _write_media_bytes(payload: bytes | bytearray, output_dir: str | Path, stem:
 
 
 def video_duration(path: str | Path) -> float:
-    """Return the video duration in seconds using PyAV (no ffprobe subprocess)."""
+    """Return the video duration in seconds using PyAV (no ffprobe subprocess).
+
+    Raises:
+        OSError: If the file cannot be opened (missing file, permission denied, etc.).
+        ValueError: If the file is corrupt or cannot be parsed (e.g.
+            :class:`av.error.InvalidDataError`).
+    """
     import av
 
     try:
@@ -100,8 +106,9 @@ def video_duration(path: str | Path) -> float:
                 if stream.average_rate and frame_count > 0:
                     return frame_count / float(stream.average_rate)
             return 0.0
-    except OSError:
-        return 0.0
+    except (OSError, ValueError) as exc:
+        logger.warning("Failed to read video duration from %s: %s", path, exc)
+        raise
 
 
 def extract_jpeg(path: str | Path, *, timestamp: float, quality: int = 3) -> bytes:
