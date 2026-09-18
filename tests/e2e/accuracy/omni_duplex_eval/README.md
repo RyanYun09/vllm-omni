@@ -30,6 +30,28 @@ params (`tests/e2e/online_serving/helpers/minicpmo_4_5_duplex.py`).
 `judge.base_url_env` (default `VLLM_DUPLEX_EVAL_JUDGE_URL`) overrides
 `judge.base_url` from the JSON config.
 
+## Judge server
+
+Judge is a pre-started, OpenAI-compatible endpoint (never launched by this
+test). It can run on a separate machine / GPU from the `omni_server`.
+
+Current judge: **Qwen2.5-VL-7B-Instruct** (`judge.model` in the JSON
+config). The 7B model is chosen for Phase A to run on a single GPU (≈16 GB
+FP16, or ≈5 GB with INT4 quantization); PR 0/1 classification and temporal
+0–3 scoring are robust at this size. The 0.00–3.00 content scoring is the
+weakest link (fine-grained counting / color / spatial checks) — if the
+guard proves insensitive to regressions, upgrade the judge (e.g.
+72B on FP8 H100 or an external API) and **re-run the baseline** to reset
+`_MIN_*` thresholds. Changing the judge never affects the P0 assertions
+(`protocol_pin`, sample count, `by_task` keys) or the CPU mock tests.
+
+Example (any OpenAI-compatible vLLM server):
+
+```bash
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768
+```
+
 ## CPU mock tests (no GPU / model / judge needed)
 
 `test_omni_duplex_eval_ci_mock.py` drives the *real*
@@ -64,6 +86,11 @@ enabling the nightly gate:
    `test_omni_duplex_eval_ci.py`.
 4. Exclude known bad samples (generate hang / judge failure) via
    `exclude_ids`.
+
+Thresholds are bound to the judge model: **switching the judge requires
+re-running steps 1–3**. If the 7B judge shows high variance (small models
+are more prompt-sensitive), widen `n` (e.g. `n=3`) or increase the sample
+size before tightening.
 
 ## Assertions (in order)
 
