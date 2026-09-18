@@ -136,9 +136,9 @@ def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> 
         "RTD_Omni",
     }, f"RTD by_task keys mismatch: {rtd.get('by_task', {}).keys()}"
     assert pr.get("by_task", {}).keys() >= {
-        "PR_correction",
-        "PR_event_reminder",
-        "PR_post_event_reminder",
+        "correction",
+        "proactive_reminder",
+        "post_event_reminder",
     }, f"PR by_task keys mismatch: {pr.get('by_task', {}).keys()}"
 
     assert rtd.get("mean_content_score", 0.0) >= _MIN_RTD_MEAN_CONTENT_SCORE, (
