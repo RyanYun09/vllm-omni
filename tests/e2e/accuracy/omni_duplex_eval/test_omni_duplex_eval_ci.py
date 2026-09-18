@@ -165,7 +165,7 @@ _CLI_TIMEOUT = 1800
 
 def _run_cli(argv: list[str]) -> None:
     """Run a CLI command and assert success within timeout.
-    
+
     stdout/stderr are printed in real-time (not captured) so CI logs
     show full generate / evaluate progress — same pattern as PR#6817
     perf tests (``-s -v`` + ``run_benchmark()``).

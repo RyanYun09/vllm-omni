@@ -85,26 +85,27 @@ steps:
           # Start judge server (Qwen2.5-VL-7B-Instruct) on the same GPU.
           # H100 (80 GB) / B200 (144 GB) easily co-locates MiniCPM-o-4_5 (~16 GB
           # BF16) + Qwen2.5-VL-7B (BF16 ~14 GB, total ~30 GB).
-          - python -m vllm.entrypoints.openai.api_server \
+          # All steps run in ONE shell so $$JUDGE_PID stays in scope for cleanup
+          # (Buildkite runs each YAML list item in a separate shell).
+          - |
+            python -m vllm.entrypoints.openai.api_server \
               --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768 \
               --trust-remote-code --dtype bfloat16 &
-          - JUDGE_PID=$!
-          # Wait for judge to be ready (up to 5 min)
-          - |
-            for i in $(seq 1 60); do
+            JUDGE_PID=$$!
+            # Wait for judge to be ready (up to 5 min)
+            for i in $$(seq 1 60); do
               if curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1; then
                 echo "Judge server ready"
                 break
               fi
               sleep 5
             done
-          - |
             set +e
             pytest -s -v tests/e2e/accuracy/omni_duplex_eval/test_omni_duplex_eval_ci.py -m "full_model and H100 and B200 and cuda and cards_1" --run-level full_model
             EXIT=$$?
             buildkite-agent artifact upload "tests/e2e/accuracy/omni_duplex_eval/results/*.json"
-            kill $JUDGE_PID 2>/dev/null || true
-            wait $JUDGE_PID 2>/dev/null || true
+            kill $$JUDGE_PID 2>/dev/null || true
+            wait $$JUDGE_PID 2>/dev/null || true
             exit $$EXIT
 
       - label: ":full_moon: Omni · Perf Test · No Async Chunk"
