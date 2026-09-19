@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 # Copyright 2025 The Qwen team.
 """Stage input processor for Qwen3 Omni MoE: Thinker → Talker transition."""
 
@@ -102,14 +102,6 @@ def _layer_tensor(layers: dict[Any, Any], key: str) -> torch.Tensor | None:
 # =========================
 # Common helpers
 # =========================
-
-
-def _ensure_list(x):
-    """Convert ConstantList / tensor-like to Python list.
-
-    Delegates to the canonical ``_common.ensure_list_unchanged``.
-    """
-    return _common.ensure_list_unchanged(x)
 
 
 def _as_tensor_or_none(value: Any) -> torch.Tensor | None:
@@ -282,7 +274,7 @@ def _construct_thinker2talker_streaming_input_async_chunk(
     request_id = request.external_req_id
     output_token_ids = request.output_token_ids
     # Convert ConstantList to regular list for OmniSerializer serialization
-    output_token_ids = _ensure_list(output_token_ids)
+    output_token_ids = _common.ensure_list_unchanged(output_token_ids)
     speaker = extract_speaker_from_request(request)
     language = extract_language_from_request(request)
     finished = torch.tensor(is_finished, dtype=torch.bool)
@@ -299,8 +291,8 @@ def _construct_thinker2talker_streaming_input_async_chunk(
                 embed=EmbeddingsStruct(prefill=emb_cpu),
                 hidden_states=HiddenStatesStruct(output=hid_cpu),
                 ids=IdsStruct(
-                    all=_ensure_list(request.all_token_ids[-new_prompt_len - 1 :]),
-                    prompt=_ensure_list(request.prompt_token_ids[-new_prompt_len:]),
+                    all=_common.ensure_list_unchanged(request.all_token_ids[-new_prompt_len - 1 :]),
+                    prompt=_common.ensure_list_unchanged(request.prompt_token_ids[-new_prompt_len:]),
                 ),
                 speaker=speaker,
                 language=language,
@@ -474,8 +466,8 @@ def thinker2talker_async_chunk(
         return t.detach().cpu() if isinstance(t, torch.Tensor) else None
 
     if chunk_id == 0:
-        all_token_ids = _ensure_list(request.all_token_ids)
-        prompt_token_ids = _ensure_list(request.prompt_token_ids)
+        all_token_ids = _common.ensure_list_unchanged(request.all_token_ids)
+        prompt_token_ids = _common.ensure_list_unchanged(request.prompt_token_ids)
         payload = OmniPayloadStruct(
             embed=EmbeddingsStruct(
                 prefill=thinker_emb.detach().cpu(),
@@ -565,10 +557,10 @@ def thinker2talker_full_payload(
         )
         return None
 
-    prompt_token_ids = _ensure_list(getattr(request, "prompt_token_ids", []) or [])
-    all_token_ids = _ensure_list(getattr(request, "all_token_ids", None) or [])
+    prompt_token_ids = _common.ensure_list_unchanged(getattr(request, "prompt_token_ids", []) or [])
+    all_token_ids = _common.ensure_list_unchanged(getattr(request, "all_token_ids", None) or [])
     if not all_token_ids:
-        output_token_ids = _ensure_list(getattr(request, "output_token_ids", []) or [])
+        output_token_ids = _common.ensure_list_unchanged(getattr(request, "output_token_ids", []) or [])
         all_token_ids = list(prompt_token_ids) + list(output_token_ids)
 
     # Drop the terminal stop-token row only when more than one row was
@@ -638,8 +630,8 @@ def build_forward_placeholder(
     for i, thinker_output in enumerate(source_outputs):
         output = thinker_output.outputs[0]
         req_id = str(getattr(thinker_output, "request_id", f"idx-{i}"))
-        prompt_token_ids = _ensure_list(thinker_output.prompt_token_ids)
-        output_ids = _ensure_list(output.cumulative_token_ids)
+        prompt_token_ids = _common.ensure_list_unchanged(thinker_output.prompt_token_ids)
+        output_ids = _common.ensure_list_unchanged(output.cumulative_token_ids)
         is_streaming_session = bool(getattr(streaming_context, "enabled", False))
         if is_streaming_session:
             prompt_token_ids, output_ids = _get_streaming_talker_tokens(
@@ -871,7 +863,7 @@ def talker2code2wav_full_payload(
         )
         return None
 
-    output_token_ids = _ensure_list(getattr(request, "output_token_ids", []) or [])
+    output_token_ids = _common.ensure_list_unchanged(getattr(request, "output_token_ids", []) or [])
     raw_shape = tuple(code_predictor_codes.shape)
     code_predictor_codes, codec_stats = _extract_qwen3_full_payload_codec_rows(
         code_predictor_codes.to(torch.long),

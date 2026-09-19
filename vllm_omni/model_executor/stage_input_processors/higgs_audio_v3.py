@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Stage-input processor for higgs-audio v3: Talker -> Code2Wav.
 
 Two adapters:
@@ -59,28 +59,6 @@ def _empty_code2wav_prompt() -> Any:
     )
 
 
-def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:
-    """Reverse the MusicGen-style delay pattern (higgs-v3 strict variant).
-
-    Delegates to the canonical ``_common.revert_delay_pattern`` with the
-    strict codebook-count and short-input checks.
-    """
-    return _common.revert_delay_pattern(
-        audio_codes_qt,
-        expected_codebooks=_NUM_CODEBOOKS,
-        allow_short=False,
-    )
-
-
-def _filter_real_code_frames(audio_codes_qt: torch.Tensor) -> torch.Tensor:
-    """Keep only frames where ALL codebook values are in [0, 1023].
-
-    Delegates to the canonical ``_common.filter_real_code_frames`` with the
-    higgs-v3 ``[num_codebooks, num_frames]`` layout.
-    """
-    return _common.filter_real_code_frames(audio_codes_qt, num_real_codes=_NUM_REAL_CODES, layout="codebooks_first")
-
-
 def talker2code2wav(
     source_outputs: list[Any],
     prompt: Any = None,
@@ -124,7 +102,7 @@ def talker2code2wav(
 
         # Step 1: Revert delay pattern
         try:
-            codes_qt = _revert_delay_pattern(codes_qt)
+            codes_qt = _common.revert_delay_pattern(codes_qt, expected_codebooks=_NUM_CODEBOOKS, allow_short=False)
         except ValueError as exc:
             logger.warning("Skipping invalid Higgs Audio v3 code sequence for Stage 1: %s", exc)
             code2wav_inputs.append(_empty_code2wav_prompt())
@@ -324,7 +302,7 @@ def talker2code2wav_async_chunk(
 
     codes_qt = torch.tensor(window_rows, dtype=torch.long).t().contiguous()
     try:
-        de_delayed = _revert_delay_pattern(codes_qt)
+        de_delayed = _common.revert_delay_pattern(codes_qt, expected_codebooks=_NUM_CODEBOOKS, allow_short=False)
     except ValueError:
         logger.warning(
             "async_chunk: insufficient frames for delay pattern reversal "

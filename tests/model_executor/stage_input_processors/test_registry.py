@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Unit tests for the stage-input processor registry (RFC #4872).
+"""Unit tests for the stage-input processor registry.
 
 Pure-logic, CPU-only: exercises kind inference, structural validation,
 dead-processor hints and ``resolve_processor`` without executing any processor

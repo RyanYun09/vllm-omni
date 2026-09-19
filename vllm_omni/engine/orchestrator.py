@@ -1816,7 +1816,7 @@ class OrchestratorBase:
                 if dead:
                     logger.warning(
                         "[Orchestrator] stage-%d custom_process_input_func %r is never invoked "
-                        "under the current async-chunk/sync wiring (RFC #4872 M0: dead-processor hint)",
+                        "under the current async-chunk/sync wiring (dead-processor hint)",
                         stage_id,
                         path,
                     )

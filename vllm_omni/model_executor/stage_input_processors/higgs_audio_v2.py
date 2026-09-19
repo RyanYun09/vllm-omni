@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Stage-input processor for higgs-audio v2: Talker -> Code2Wav.
 
 Mirrors the qwen3_tts contract:
@@ -48,24 +48,6 @@ _NUM_CODEBOOKS = 8
 _AUDIO_STREAM_BOS_ID = 1024
 _AUDIO_STREAM_EOS_ID = 1025
 _NUM_REAL_CODES = _AUDIO_STREAM_BOS_ID  # codes in [0, 1023] are real
-
-
-def _filter_real_code_frames(audio_codes: torch.Tensor) -> torch.Tensor:
-    """Keep only frames whose codes are entirely in [0, 1023].
-
-    Delegates to the canonical ``_common.filter_real_code_frames`` with the
-    higgs-v2 ``[num_frames, num_codebooks]`` layout.
-    """
-    return _common.filter_real_code_frames(audio_codes, num_real_codes=_NUM_REAL_CODES, layout="frames_first")
-
-
-def _revert_delay_pattern(audio_codes_qt: torch.Tensor) -> torch.Tensor:
-    """Reverse the delay-pattern shift (higgs-v2 lenient variant).
-
-    Delegates to the canonical ``_common.revert_delay_pattern`` with
-    ``allow_short=True`` (T < Q returns the input unchanged).
-    """
-    return _common.revert_delay_pattern(audio_codes_qt, allow_short=True)
 
 
 def talker2code2wav(
@@ -117,7 +99,7 @@ def talker2code2wav(
         # the upstream ``HiggsAudioServeEngine.generate`` decode line:
         #     vq_code = revert_delay_pattern(out).clip(0, real-1)[:, 1:-1]
         codes_qt = audio_codes.transpose(0, 1).contiguous().cpu()
-        codes_qt = _revert_delay_pattern(codes_qt)
+        codes_qt = _common.revert_delay_pattern(codes_qt, allow_short=True)
         codes_qt = codes_qt.clamp_(min=0, max=_NUM_REAL_CODES - 1)
         if codes_qt.shape[-1] >= 3:
             codes_qt = codes_qt[:, 1:-1]

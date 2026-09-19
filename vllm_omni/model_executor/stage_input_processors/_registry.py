@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Stage-input processor registry (RFC #4872).
+"""Stage-input processor registry.
 
 This module is the **structural validation** layer behind the three ``importlib``
 resolution points that are validated as independent symbol lookups:
@@ -14,22 +14,17 @@ resolution points that are validated as independent symbol lookups:
 * ``distributed/omni_connectors/transfer_adapter/chunk_transfer_adapter.__init__``
   — the producer-side async-chunk builder (``AsyncChunkProducer``).
 
-Scope / responsibility split
-----------------------------
-The registry **only performs signature-level structural checks**
+The registry only performs signature-level structural checks
 (``inspect.signature``); it never executes processor logic and never loads
-model weights.  Behavioural guarantees (payload shape, flush semantics, golden
-outputs) belong to the golden / parity tests, not here — do not conflate the
-two responsibilities.
+model weights.  Behavioural guarantees belong to the golden / parity tests.
 
 Producer kwargs are contract.  ``FullPayloadProducer`` keeps ``pooling_output``
-(and ``is_finished`` is **optional** — the worker retries without it when the
+(``is_finished`` is **optional** — the worker retries without it when the
 processor rejects the kwarg); ``AsyncChunkProducer`` keeps ``multimodal_output``
 and **must** accept ``is_finished`` — the scheduler always passes it on the
 async-chunk path (see ``chunk_transfer_adapter._send_single_request``).
 
-Kind inference is name-driven (suffix-based), following the naming convention
-documented in :mod:`vllm_omni.model_executor.stage_input_processors`:
+Kind inference is name-driven (suffix-based):
 
 * ``_token_only``            -> ``placeholder_prompt_builder``
 * ``_full_payload`` / ``_batch`` -> ``producer_full_payload``
@@ -40,11 +35,10 @@ documented in :mod:`vllm_omni.model_executor.stage_input_processors`:
 * ``moss_tts.talker2codec`` (legacy multi-source shape) ->
   ``legacy_multi_source``
 
-``resolve_processor`` is a drop-in replacement for the legacy
-``getattr(importlib.import_module(mod_path), fn_name)`` lookups: it returns a
-:class:`ProcessorSpec` whose ``fn`` is the **same callable object** the legacy
-code produced, so callers keep identical runtime behaviour while gaining
-validated kind metadata.
+``resolve_processor`` returns a :class:`ProcessorSpec` whose ``fn`` is the
+same callable object produced by the legacy
+``getattr(importlib.import_module(mod_path), fn_name)`` lookups, so callers keep
+identical runtime behaviour while gaining validated kind metadata.
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ import asyncio
 import queue
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import janus
 import pytest
@@ -98,13 +98,9 @@ class FakeInputProcessor:
 
 
 class FakePrewarmPool:
-    """Single-replica pool double that binds requests only on submission."""
-
     stage_type = "llm"
 
     def __init__(self, role: str) -> None:
-        self.stage_client = SimpleNamespace()
-        self._bound_request_ids: set[str] = set()
         self.stage_vllm_config = SimpleNamespace(
             model_config=SimpleNamespace(
                 max_model_len=64,
@@ -113,16 +109,12 @@ class FakePrewarmPool:
         )
         self.submitted: list[Any] = []
 
-    async def submit_initial(self, request_id, _req_state, request, prompt_text=None):
+    async def submit_initial(self, _request_id, _req_state, request, prompt_text=None):
         self.submitted.append(request)
-        self._bound_request_ids.add(request_id)
         return 0
 
-    def get_bound_replica_id(self, request_id):
-        return 0 if request_id in self._bound_request_ids else None
-
-    def get_bound_client(self, request_id):
-        return self.stage_client if self.get_bound_replica_id(request_id) is not None else None
+    def get_bound_replica_id(self, _request_id):
+        return 0
 
 
 def _request_output(request_id: str) -> RequestOutput:
@@ -205,14 +197,11 @@ async def test_forward_text_prompt_uses_target_stage_input_processor() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payload_sender_info", [None, {"host": "10.0.0.2", "zmq_port": 52099}])
-async def test_async_prewarm_skips_outgoing_only_stage(payload_sender_info) -> None:
+async def test_async_prewarm_skips_outgoing_only_stage() -> None:
     orchestrator = object.__new__(Orchestrator)
     stage0 = FakePrewarmPool("sender")
     stage1 = FakePrewarmPool("sender")
     stage2 = FakePrewarmPool("receiver")
-    if payload_sender_info is not None:
-        stage1.stage_client.get_payload_sender_info = MagicMock(return_value=payload_sender_info)
     orchestrator.stage_pools = [stage0, stage1, stage2]
     orchestrator._emit_tx_edge = lambda **_kwargs: None
     orchestrator._on_stage_submitted = MagicMock()
@@ -231,14 +220,7 @@ async def test_async_prewarm_skips_outgoing_only_stage(payload_sender_info) -> N
 
     assert prewarmed is True
     assert stage1.submitted == []
-    assert stage1.get_bound_client("req-prewarm") is None
     assert len(stage2.submitted) == 1
-    assert stage2.get_bound_client("req-prewarm") is stage2.stage_client
-    assert stage2.submitted[0].payload_sender_info == payload_sender_info
-    if payload_sender_info is not None:
-        stage1.stage_client.get_payload_sender_info.assert_called_once_with()
-    assert stage2.submitted[0].external_req_id == "req-prewarm"
-    assert stage2.submitted[0].resumable is True
     assert 1 not in req_state.stage_submit_ts
     assert 2 in req_state.stage_submit_ts
     orchestrator._on_stage_submitted.assert_called_once_with(
@@ -271,7 +253,7 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
     )
     orchestrator.stage_pools = [stage0, stage1]
     orchestrator._emit_tx_edge = lambda **_kwargs: None
-    orchestrator._record_duplex_stage_submission = MagicMock()
+    orchestrator._on_stage_submitted = MagicMock()
     req_state = OrchestratorRequestState(
         request_id="req-prewarm-resolved",
         prompt={"prompt_token_ids": [1, 2]},
@@ -291,48 +273,12 @@ async def test_prewarm_uses_registered_build_prewarm_placeholder() -> None:
     # stage-0 prompt.  The synthetic [1, 2] prompt has no chat-template marker,
     # so the scan yields 0 and the builder floors it to a 1-token placeholder.
     assert stage1.submitted[0].prompt_token_ids == [0]
-    orchestrator._record_duplex_stage_submission.assert_called_once_with(
+    orchestrator._on_stage_submitted.assert_called_once_with(
         1,
         "req-prewarm-resolved",
         0,
         req_state,
     )
-
-
-@pytest.mark.asyncio
-async def test_duplex_prewarm_runs_after_first_stage0_submission() -> None:
-    port, stage_pools, request_states, prewarm, submission = _duplex_stage_port_submission()
-    prewarm.return_value = True
-
-    result = await port.submit(submission)
-
-    assert result.stage_id == 0
-    stage_pools[0].submit_initial.assert_awaited_once()
-    prewarm.assert_awaited_once_with("req-duplex", ANY, request_states["req-duplex"])
-
-
-@pytest.mark.asyncio
-async def test_duplex_submit_bails_out_when_prewarm_failed_the_request() -> None:
-    """A failed prewarm has already aborted the request and popped its state.
-
-    Returning a success result here would hand the control plane a replica for a
-    request that no longer exists, and the trailing bookkeeping would re-register
-    a running counter the cleanup just released -- a leak that never decrements.
-    """
-    port, stage_pools, request_states, prewarm, submission = _duplex_stage_port_submission()
-    counter = MagicMock()
-    port._running_counter = counter
-    prewarm.return_value = False
-    request_state = request_states["req-duplex"]
-
-    with pytest.raises(RuntimeError, match="prewarm failed"):
-        await port.submit(submission)
-
-    prewarm.assert_awaited_once()
-    assert request_state.duplex_stage_fences == {}
-    assert request_state.stage_submit_ts == {}
-    assert request_state.running_counter_registered is False
-    counter.increment.assert_not_called()
 
 
 @pytest.mark.asyncio

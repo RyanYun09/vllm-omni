@@ -37,16 +37,6 @@ def _build_prompt_embed_struct(prompt_payload: dict[str, Any]) -> EmbeddingsStru
     )
 
 
-def _ensure_list(x: Any) -> list[Any]:
-    """Delegate to the canonical shared helper."""
-    return _common.ensure_list(x)
-
-
-def _to_token_id_list(value: Any) -> list[int]:
-    """Recursive token-id flattening (cosyvoice3 golden semantics)."""
-    return _common.to_token_id_list(value, recursive=True)
-
-
 def _strip_prompt_prefix(output_ids: list[Any], prefix_ids: list[Any]) -> list[Any]:
     if prefix_ids and len(output_ids) >= len(prefix_ids) and output_ids[: len(prefix_ids)] == prefix_ids:
         return output_ids[len(prefix_ids) :]
@@ -59,12 +49,7 @@ def _prompt_speech_token_ids(multi_modal_data: dict[str, Any]) -> list[int]:
         embed = multi_modal_data.get("embed")
         if isinstance(embed, dict):
             speech_token = embed.get("speech_token")
-    return _to_token_id_list(speech_token)
-
-
-def _to_cpu_tensor(x: Any) -> torch.Tensor | None:
-    """Delegate to the canonical shared helper."""
-    return _common.to_cpu_tensor(x)
+    return _common.to_token_id_list(speech_token, recursive=True)
 
 
 def talker2code2wav_async_chunk(
@@ -102,7 +87,7 @@ def talker2code2wav_async_chunk(
                 prompt_payload = {}
                 cond_keys = ("speech_token", "speech_feat", "embedding", "speech_token_len")
                 for key in cond_keys:
-                    value = _to_cpu_tensor(info_embed.get(key))
+                    value = _common.to_cpu_tensor(info_embed.get(key))
                     if value is not None:
                         prompt_payload[key] = value
                 if isinstance(multimodal_output, Mapping):
@@ -112,7 +97,7 @@ def talker2code2wav_async_chunk(
                     for key in cond_keys:
                         if key in prompt_payload:
                             continue
-                        value = _to_cpu_tensor(mm_embed.get(key))
+                        value = _common.to_cpu_tensor(mm_embed.get(key))
                         if value is not None:
                             prompt_payload[key] = value
                 # Drop any right-padding carried from batched talker emission so
@@ -160,7 +145,7 @@ def talker2code2wav_async_chunk(
             return None
 
         with nullcontext():
-            output_token_ids = _ensure_list(getattr(request, "output_token_ids", []))
+            output_token_ids = _common.ensure_list(getattr(request, "output_token_ids", []))
             seen_len = int(state.get("seen_len", 0))
             new_tokens = output_token_ids[seen_len:] if seen_len < len(output_token_ids) else []
             state["seen_len"] = len(output_token_ids)
@@ -286,8 +271,8 @@ def text2flow_token_only(
         if not source_output.finished:
             continue
         output = source_output.outputs[0]
-        prefix_ids = _ensure_list(source_output.prompt_token_ids)
-        raw_output_ids = _ensure_list(output.cumulative_token_ids)
+        prefix_ids = _common.ensure_list(source_output.prompt_token_ids)
+        raw_output_ids = _common.ensure_list(output.cumulative_token_ids)
         output_ids = _strip_prompt_prefix(raw_output_ids, prefix_ids)
         multi_modal_data = output.multimodal_output
         if multi_modal_data is None:

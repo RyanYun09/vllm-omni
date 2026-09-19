@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Stage input processor for GLM-TTS: AR → DiT Pipeline.
 
 Supports both sync (non-streaming) and async_chunk (streaming) modes.
@@ -38,7 +38,7 @@ def _copy_voice_clone_payload(
             prompt = src.get("prompt_token")
         if prompt is not None:
             if to_cpu:
-                prompt = _to_cpu_tensor(prompt)
+                prompt = _common.to_cpu_tensor(prompt)
             if prompt is not None:
                 dst["prompt_speech_token"] = prompt
 
@@ -48,7 +48,7 @@ def _copy_voice_clone_payload(
         val = src.get(key)
         if val is not None:
             if to_cpu:
-                val = _to_cpu_tensor(val)
+                val = _common.to_cpu_tensor(val)
             if val is not None:
                 dst[key] = val
 
@@ -168,14 +168,6 @@ def _extract_last_speech_token(pooling_output: dict[str, Any]) -> int | None:
     if token_val < 0:
         return None
     return token_val
-
-
-def _to_cpu_tensor(value: Any) -> torch.Tensor | None:
-    """Convert value to CPU tensor if possible.
-
-    Delegates to the canonical ``_common.to_cpu_tensor``.
-    """
-    return _common.to_cpu_tensor(value)
 
 
 # ---------------------------------------------------------------------------
