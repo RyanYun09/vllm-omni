@@ -57,7 +57,7 @@ from vllm_omni.engine.arg_utils import OmniEngineArgs
 from vllm_omni.entrypoints.stage_utils import _to_dict, set_stage_devices
 from vllm_omni.entrypoints.utils import filter_dataclass_kwargs
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
-from vllm_omni.inputs.preprocess import OmniInputPreprocessor, build_omni_renderer, omni_renderer_cls
+from vllm_omni.inputs.preprocess import build_omni_renderer, omni_renderer_cls
 from vllm_omni.model_executor.stage_input_processors import resolve_processor
 from vllm_omni.outputs.output_processor import MultimodalOutputProcessor
 from vllm_omni.platforms import current_omni_platform
@@ -576,6 +576,7 @@ class StageMetadata:
     # builder) so the orchestrator can resolve ``build_prewarm_placeholder``
     # at async-chunk prewarm time.
     sync_process_input_func: str | None = None
+    prompt_transform_func: Callable | None = None
     prompt_expand_func: Callable | None = None
     cfg_kv_collect_func: Callable | None = None
     # Multi-replica: replica_id distinguishes replicas of the same stage.
@@ -662,6 +663,12 @@ def extract_legacy_stage_metadata(stage_config: Any) -> StageMetadata:
         # Keep the raw dotted path (not a resolved callable): the orchestrator
         # resolves ``build_prewarm_placeholder`` off the ``*_token_only`` fn.
         sync_process_input_func = _spif_path
+
+    prompt_transform_func: Callable | None = None
+    _ptf_path = _get_attr_or_item(stage_config, "prompt_transform_func")
+    if _ptf_path:
+        _mod, _fn = _ptf_path.rsplit(".", 1)
+        prompt_transform_func = getattr(importlib.import_module(_mod), _fn)
 
     prompt_expand_func: Callable | None = None
     _pef_path = _get_attr_or_item(stage_config, "prompt_expand_func")
