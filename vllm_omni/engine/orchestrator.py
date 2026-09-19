@@ -2772,6 +2772,18 @@ class OrchestratorBase:
             next_prompt_len = max(1, compute_talker_prompt_ids_length(prompt_token_ids))
         except Exception:
             next_prompt_len = max(1, len(prompt_token_ids))
+        # A stage may size its own prewarmed placeholder prompt via
+        # hf_overrides.async_chunk_prewarm_prompt_len (e.g. a talker whose
+        # engine positions must cover a speaker-prompt prefill; the model
+        # validates the value and reports the right one on mismatch).
+        prewarm_len = getattr(
+            getattr(getattr(self.stage_pools[next_stage_id], "stage_vllm_config", None), "model_config", None),
+            "hf_config",
+            None,
+        )
+        prewarm_len = getattr(prewarm_len, "async_chunk_prewarm_prompt_len", None)
+        if prewarm_len is not None and int(prewarm_len) > 1:
+            next_prompt_len = int(prewarm_len)
         base_input["prompt_token_ids"] = [0] * next_prompt_len
         base_input["multi_modal_data"] = None
         base_input["mm_processor_kwargs"] = None
