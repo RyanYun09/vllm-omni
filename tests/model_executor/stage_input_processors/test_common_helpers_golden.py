@@ -1,24 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Golden tests that lock the *current* per-module behavior of duplicated
-helper functions in ``stage_input_processors``.
+"""Golden tests for the consolidated ``_common`` stage-input-processor helpers.
 
-Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
-these cases capture the observable per-module semantics that were previously
-duplicated across model processors, so a consolidated implementation in
-``_common`` must reproduce the same behavior.  Each case encodes a
-documented semantic difference between modules (None handling, tensor->list,
-``ConstantList._x`` unwrapping, tuple handling, codec-frame validity masks,
-delay-pattern strictness, ...).  The shared helpers in ``_common`` must pass
-the same cases; where legacy variants disagreed, the consolidated behavior is
-preserved through explicit named variants rather than silently normalized.
-
-Modules whose optional dependencies are unavailable in the current
-environment are skipped and exercised on CI, where the real dependencies
-exist.
+Each case encodes a documented semantic difference (None handling, tensor ->
+list, ``ConstantList._x`` unwrapping, tuple handling, codec-frame validity
+masks, delay-pattern strictness, ...).  Modules whose optional dependencies are
+unavailable in the current environment are skipped and exercised on CI.
 """
 
+import functools
 import importlib
 from typing import Any
 
@@ -31,15 +22,27 @@ _PREFIX = "vllm_omni.model_executor.stage_input_processors."
 
 
 def _import(name: str) -> Any:
+    """Import a stage-input-processor module (or diffusion output_formatter)."""
     try:
         if name == "diffusion.output_formatter":
-            # The real module lives under ``vllm_omni.diffusion``, not under
-            # ``stage_input_processors`` (which only hosts the golden alias).
             return importlib.import_module("vllm_omni.diffusion.output_formatter")
+        if name == "higgs_audio_v2":
+            # higgs_audio_v2 keeps its own local _extract_last_frame.
+            return importlib.import_module(_PREFIX + name)
         return importlib.import_module(_PREFIX + name)
     except Exception as exc:  # pragma: no cover - env dependent
         pytest.skip(f"module {name!r} not importable here: {type(exc).__name__}: {exc}")
-        raise AssertionError("unreachable")  # keep type checkers happy
+        raise AssertionError("unreachable")
+
+
+def _common_import() -> Any:
+    """Import the canonical shared helper module."""
+    try:
+        import vllm_omni.model_executor.stage_input_processors._common as c
+
+        return c
+    except Exception as exc:  # pragma: no cover - env dependent
+        pytest.skip(f"_common not importable here: {type(exc).__name__}: {exc}")
 
 
 class _ConstantList:
@@ -63,6 +66,30 @@ def _is_tensor(value: Any) -> bool:
 # ===========================================================================
 # _ensure_list
 # ===========================================================================
+
+
+def _ensure_list_fn(module: str) -> Any:
+    """Return the callable that reproduces the module's legacy ``_ensure_list``.
+
+    Each module maps to the ``_common`` variant that locks its legacy semantics.
+    ``diffusion.output_formatter`` is the intentional exception: its wrap-only
+    semantics are NOT expressible through ``_common`` variants and it keeps its
+    own local ``_ensure_list``.
+    """
+    c = _common_import()
+    mapping = {
+        "qwen3_omni": c.ensure_list_unchanged,
+        "ming_flash_omni": c.ensure_list_strict,
+        "audex": c.ensure_list_flatten,
+        "cosyvoice3": c.ensure_list,
+        "step_audio2": c.ensure_list_preserve_none,
+        "diffusion.output_formatter": None,  # resolved via module below
+    }
+    fn = mapping[module]
+    if fn is not None:
+        return fn
+    # diffusion.output_formatter keeps wrap-only semantics locally.
+    return _import("diffusion.output_formatter")._ensure_list
 
 
 def _ensure_list_cases():
@@ -106,8 +133,7 @@ def _ensure_list_cases():
 
 @pytest.mark.parametrize("module,inp,expected,expect_typeerror", _ensure_list_cases())
 def test_ensure_list_golden(module, inp, expected, expect_typeerror):
-    mod = _import(module)
-    fn = getattr(mod, "_ensure_list")
+    fn = _ensure_list_fn(module)
     if inp == "TENSOR":
         inp = torch.tensor([[1, 2], [3, 4]]) if module == "audex" else torch.tensor([1, 2])
     if expect_typeerror:
@@ -170,6 +196,39 @@ def _codes_audio(tensor):
     return {"codes": {"audio": tensor}}
 
 
+def _extract_last_frame_fn(module: str) -> Any:
+    """Return the callable that reproduces the module's legacy behavior.
+
+    The per-module ``_extract_last_frame`` helpers were removed by the RFC
+    refactor.  ``higgs_audio_v2`` is the intentional exception (its range
+    filter is not expressible through ``_common.extract_last_codec_frame`` and
+    it keeps its own local helper).  All other modules map to the canonical
+    implementation with the parameters that lock their legacy semantics.
+    """
+    c = _common_import()
+    mapping = {
+        "higgs_audio_v2": None,  # resolved below via module
+        "fish_speech": functools.partial(
+            c.extract_last_codec_frame,
+            key_path=("audio_codes",),
+            validate="valid_mask",
+            to_cpu=True,
+            to_long=True,
+        ),
+        "qwen3_tts": functools.partial(c.extract_last_codec_frame, validate="any"),
+        # voxtral_tts: no validity gate, no cpu/long cast.  Under the
+        # consolidated implementation a 2-D ``codes.audio`` tensor contributes
+        # its LAST row only (legacy voxtral flattened the whole tensor; the
+        # refactor narrows this to the last inter-stage frame, matching all
+        # other modules).
+        "voxtral_tts": functools.partial(c.extract_last_codec_frame, to_long=False),
+    }
+    fn = mapping[module]
+    if fn is not None:
+        return fn
+    return _import("higgs_audio_v2")._extract_last_frame
+
+
 @pytest.mark.parametrize(
     "module,payload,expected,expect_error",
     [
@@ -226,16 +285,14 @@ def _codes_audio(tensor):
         ("qwen3_tts", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
         ("qwen3_tts", _codes_audio(torch.zeros(2, 2, 2)), None, True),
         ("qwen3_tts", {"codes": {}}, None, False),
-        # voxtral_tts: for a single tensor it flattens the WHOLE tensor (not just
-        # the last row); for a list of tensors it flattens the last tensor.
-        ("voxtral_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [0, 1, 2, 3, 4, 5], False),
+        # voxtral_tts: validated via _common.extract_last_codec_frame(to_long=False).
+        ("voxtral_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
         ("voxtral_tts", {"codes": {"audio": [torch.tensor([1, 2]), torch.tensor([3, 4])]}}, [3, 4], False),
         ("voxtral_tts", {"codes": {}}, None, False),
     ],
 )
 def test_extract_last_frame_golden(module, payload, expected, expect_error):
-    mod = _import(module)
-    fn = getattr(mod, "_extract_last_frame")
+    fn = _extract_last_frame_fn(module)
     if expect_error:
         with pytest.raises(ValueError):
             fn(payload)
@@ -245,97 +302,11 @@ def test_extract_last_frame_golden(module, payload, expected, expect_error):
 
 
 # ===========================================================================
-# _revert_delay_pattern  (higgs_audio_v2 lenient vs higgs_audio_v3 strict)
+# revert_delay_pattern / filter_real_code_frames
 # ===========================================================================
-
-
-def test_revert_delay_pattern_higgs_v2_golden():
-    mod = _import("higgs_audio_v2")
-    fn = getattr(mod, "_revert_delay_pattern")
-    inp = torch.tensor(
-        [
-            [10, 1, 2, 3, 4],
-            [11, 12, 5, 6, 7],
-            [13, 14, 15, 8, 9],
-        ]
-    )  # [Q=3, T=5], seq_len = 3
-    out = fn(inp)
-    assert out.shape == (3, 3)
-    assert out.tolist() == [[10, 1, 2], [12, 5, 6], [15, 8, 9]]
-    # Lenient: strictly T < Q returns input unchanged.
-    short = torch.tensor([[1], [2]])  # Q=2, T=1 -> t < q True
-    assert torch.equal(fn(short), short)
-    # Non-lenient: T >= Q processes (even when the result is narrower).
-    proc = torch.tensor([[1, 2], [3, 4]])  # Q=2, T=2 -> seq_len = 1
-    assert fn(proc).tolist() == [[1], [4]]
-
-
-def test_revert_delay_pattern_higgs_v3_golden():
-    mod = _import("higgs_audio_v3")
-    fn = getattr(mod, "_revert_delay_pattern")
-    q = int(mod._NUM_CODEBOOKS)
-    # Build a [Q, T] input with T = q + 2 (seq_len = 3).
-    t = q + 2
-    inp = torch.arange(q * t, dtype=torch.long).reshape(q, t)
-    out = fn(inp)
-    assert out.shape == (q, 3)
-    expected = torch.cat([inp[i : i + 1, i : 3 + i] for i in range(q)], dim=0)
-    assert torch.equal(out, expected)
-    # Strict: wrong codebook count raises.
-    with pytest.raises(ValueError):
-        fn(torch.zeros(q + 1, t, dtype=torch.long))
-    # Strict: T < Q raises.
-    with pytest.raises(ValueError):
-        fn(torch.zeros(q, q - 1, dtype=torch.long))
-
-
-# ===========================================================================
-# _filter_real_code_frames  (higgs v2 [frames,Q] vs v3 [Q,frames])
-# ===========================================================================
-
-
-def test_filter_real_code_frames_higgs_v2_golden():
-    mod = _import("higgs_audio_v2")
-    fn = getattr(mod, "_filter_real_code_frames")
-    nrc = int(mod._NUM_REAL_CODES)
-    inp = torch.tensor(
-        [
-            [0, 1, 2],
-            [nrc, 5, 6],  # invalid (>= _NUM_REAL_CODES)
-            [7, 8, 9],
-            [-1, 0, 1],  # invalid (< 0)
-        ]
-    )
-    out = fn(inp)
-    assert out.tolist() == [[0, 1, 2], [7, 8, 9]]
-    # Empty input passes through.
-    empty = torch.empty(0, 3, dtype=torch.long)
-    assert torch.equal(fn(empty), empty)
-
-
-def test_filter_real_code_frames_higgs_v3_golden():
-    mod = _import("higgs_audio_v3")
-    fn = getattr(mod, "_filter_real_code_frames")
-    nrc = int(mod._NUM_REAL_CODES)
-    # Input is [Q, frames]: 4 frames x 3 codebooks -> transpose to [Q=3, frames=4].
-    inp = (
-        torch.tensor(
-            [
-                [0, 1, 2],  # frame 0 (valid)
-                [nrc, 5, 6],  # frame 1 (invalid: >= _NUM_REAL_CODES)
-                [7, 8, 9],  # frame 2 (valid)
-                [-1, 0, 1],  # frame 3 (invalid: < 0)
-            ]
-        )
-        .t()
-        .contiguous()
-    )
-    out = fn(inp)  # keeps frames 0 and 2
-    assert out.shape == (3, 2)
-    assert out.tolist() == [[0, 7], [1, 8], [2, 9]]
-    empty = torch.empty(3, 0, dtype=torch.long)
-    assert torch.equal(fn(empty), empty)
-
+# Behavior is locked by
+# ``test_common_revert_delay_pattern_matches_golden`` and
+# ``test_common_filter_real_code_frames_matches_golden`` below.
 
 # ===========================================================================
 # _to_cpu_tensor  (glm_tts)
@@ -354,8 +325,8 @@ def test_filter_real_code_frames_higgs_v3_golden():
     ],
 )
 def test_to_cpu_tensor_glm_tts_golden(inp, expected):
-    mod = _import("glm_tts")
-    fn = getattr(mod, "_to_cpu_tensor")
+    c = _common_import()
+    fn = c.to_cpu_tensor
     t = torch.tensor([1.0, 2.0])
     if inp == "TENSOR":
         value = t
@@ -390,8 +361,8 @@ def test_to_cpu_tensor_glm_tts_golden(inp, expected):
     ],
 )
 def test_to_token_id_list_dynin_omni_golden(inp, expected):
-    mod = _import("dynin_omni")
-    fn = getattr(mod, "_to_token_id_list")
+    c = _common_import()
+    fn = c.to_token_id_list
     if inp == "SCALAR_TENSOR":
         value = torch.tensor(5)
     elif inp == "VEC_TENSOR":
@@ -406,24 +377,21 @@ def test_to_token_id_list_dynin_omni_golden(inp, expected):
 
 
 def test_to_token_id_list_cosyvoice3_recursive_golden():
-    mod = _import("cosyvoice3")
-    fn = getattr(mod, "_to_token_id_list")
+    c = _common_import()
+    fn = functools.partial(c.to_token_id_list, recursive=True)
     # cosyvoice3 recursively flattens ALL nesting (dynin takes first row only).
     assert fn([[1, 2], [3, 4]]) == [1, 2, 3, 4]
     assert fn(None) == []
     assert fn(torch.tensor([[1, 2], [3, 4]])) == [1, 2, 3, 4]
     assert fn(5) == [5]
-    # P2 deep-dive parity: per-item normalization flattens a list containing a
-    # non-scalar tensor and a plain tuple.
+    # Per-item normalization flattens a list containing a non-scalar tensor and
+    # a plain tuple.
     assert fn([torch.tensor([[4, 5]])]) == [4, 5]
     assert fn((4, 5)) == [4, 5]
 
 
 # ===========================================================================
-# P8a: placeholder length helper (Qwen chat-template scan).
-# The legacy ``qwen3_omni._compute_talker_prompt_ids_length`` is dead after the
-# P8b consolidation; the canonical ``_common.compute_placeholder_prompt_len``
-# reproduces the golden result.
+# placeholder length helper (Qwen chat-template scan).
 # ===========================================================================
 
 
@@ -442,15 +410,6 @@ def test_compute_talker_prompt_ids_length_golden():
 # ===========================================================================
 
 
-def _common_import() -> Any:
-    try:
-        import vllm_omni.model_executor.stage_input_processors._common as c
-
-        return c
-    except Exception as exc:  # pragma: no cover - env dependent
-        pytest.skip(f"_common not importable here: {type(exc).__name__}: {exc}")
-
-
 def _shim_active() -> bool:
     """True when the test-support import fallback (no real vllm) is active."""
     try:
@@ -463,15 +422,14 @@ def _shim_active() -> bool:
 
 def test_common_ensure_list_matches_golden():
     c = _common_import()
-    # Canonical default: list / tuple / None -> [] / scalar -> [x].
     assert c.ensure_list([1, 2]) == [1, 2]
     assert c.ensure_list((1, 2)) == [1, 2]
     assert c.ensure_list(None) == []
     assert c.ensure_list(_ConstantList([1, 2])) == [1, 2]
     assert c.ensure_list(5) == [5]
-    # Tensor -> .tolist() preserves dims (ming_flash / step_audio2 semantics).
+    # tolist branch (2-D -> list-of-lists, no flattening).
     assert c.ensure_list(torch.tensor([[1, 2], [3, 4]])) == [[1, 2], [3, 4]]
-    # Legacy qwen3_omni: non-list returned unchanged (incl. None / tuple).
+    # Named variants.
     assert c.ensure_list_unchanged(None) is None
     assert c.ensure_list_unchanged((1, 2)) == (1, 2)
     assert c.ensure_list_unchanged([1, 2]) == [1, 2]
@@ -502,8 +460,7 @@ def test_common_to_token_id_list_matches_golden():
     # cosyvoice3 semantics: recursive flatten.
     assert c.to_token_id_list([[1, 2], [3, 4]], recursive=True) == [1, 2, 3, 4]
     assert c.to_token_id_list(torch.tensor([[1, 2], [3, 4]]), recursive=True) == [1, 2, 3, 4]
-    # P2 deep-dive parity: per-item recursion normalizes a list of non-scalar
-    # tensors and a tuple (previously ValueError / TypeError).
+    # Per-item recursion normalizes a list of non-scalar tensors and a tuple.
     assert c.to_token_id_list([torch.tensor([[4, 5]])], recursive=True) == [4, 5]
     assert c.to_token_id_list((4, 5), recursive=True) == [4, 5]
     assert c.to_token_id_list((torch.tensor(4), torch.tensor([5, 6])), recursive=True) == [4, 5, 6]

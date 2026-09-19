@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Parity tests: async-chunk prewarm placeholder vs sync forward placeholder.
 
-Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
 ``*_token_only`` placeholder builders expose a dual entry —
 ``build_forward_placeholder(source_outputs, ctx)`` for the sync forward path
 and ``build_prewarm_placeholder(*, stage0_prompt, ctx, downstream_stage_id)`` for

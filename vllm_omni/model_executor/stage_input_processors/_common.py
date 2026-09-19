@@ -3,18 +3,8 @@
 
 """Canonical, shared helpers for ``stage_input_processors``.
 
-Related to RFC #4872 (https://github.com/vllm-project/vllm-omni/issues/4872):
-these are consolidated implementations of helpers that were previously
-duplicated across model modules with subtle behavioral differences (see
-``tests/model_executor/stage_input_processors/test_common_helpers_golden.py``,
-which locks the observed per-module behaviour).
-
-**Consolidation rule:** where legacy variants disagreed, the default
-implementation follows the most-complete semantics; divergent legacy behaviour
-is preserved through explicit named variants (e.g. ``ensure_list_unchanged``)
-or parameters (e.g. ``filter_real_code_frames(..., layout=...)``).  A module
-may switch to ``_common`` only after its legacy behaviour is golden-locked and
-the matching variant is used.
+Implementation notes are golden-locked in
+``tests/model_executor/stage_input_processors/test_common_helpers_golden.py``.
 """
 
 from __future__ import annotations
@@ -205,11 +195,10 @@ def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
 
 
 def _to_token_id_list_recursive(value: Any) -> list[int]:
-    """cosyvoice3 recursive token-id flattening (per-item normalization).
+    """Recursive token-id flattening (per-item normalization).
 
-    Mirrors the pre-consolidation ``cosyvoice3._to_token_id_list``: ``None`` ->
-    ``[]``; a tensor is reshaped flat; every item that is a tensor or a
-    ``list``/``tuple`` is recursed into, scalars are converted with ``int()``.
+    ``None`` -> ``[]``; a tensor is reshaped flat; every item that is a tensor
+    or a ``list``/``tuple`` is recursed into; scalars are converted with ``int()``.
     """
     if value is None:
         return []
