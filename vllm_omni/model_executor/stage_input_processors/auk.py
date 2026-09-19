@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import torch
 from vllm.inputs import TextPrompt
 from vllm.logger import init_logger
 
 from vllm_omni.inputs.data import OmniTokensPrompt
-from vllm_omni.model_executor.stage_input_processors import _common
 
 logger = init_logger(__name__)
 
@@ -75,6 +75,28 @@ def _extract_text_cond(ar_output: Any) -> Any:
     return None
 
 
+def _to_cpu_tensor(text_cond: Any) -> torch.Tensor:
+    """Coerce the emitted condition to a CPU tensor.
+
+    Restores the AuK-wide semantics that the shared ``_common.to_cpu_tensor``
+    (glm_tts-narrow) does not provide: a list of segments is recursively
+    converted and concatenated along ``dim=0``, an empty list raises
+    ``ValueError``, and numpy / array-like inputs are converted via
+    ``torch.as_tensor``. The 2-D shape check lives at the call site.
+    """
+    if isinstance(text_cond, list):
+        if not text_cond:
+            raise ValueError("AuK encoder emitted an empty text condition list")
+        parts = [_to_cpu_tensor(part) for part in text_cond]
+        return torch.cat(parts, dim=0) if len(parts) > 1 else parts[0]
+    if isinstance(text_cond, torch.Tensor):
+        tensor = text_cond
+    else:
+        # numpy array or any array-like the connector round-tripped.
+        tensor = torch.as_tensor(text_cond)
+    return tensor.detach().cpu()
+
+
 def encoder2dit(
     source_outputs: list[Any],
     prompt: OmniTokensPrompt | TextPrompt | list | None = None,
@@ -100,7 +122,7 @@ def encoder2dit(
             "AuK encoder stage produced no hidden_states.output multimodal payload; "
             "stage 1 cannot run without the fused thinker hidden states"
         )
-    prompt_embeds = _common.to_cpu_tensor(text_cond)
+    prompt_embeds = _to_cpu_tensor(text_cond)
     if prompt_embeds is None:
         raise ValueError("AuK encoder emitted no text condition tensor for stage 1")
     if prompt_embeds.ndim != 2:

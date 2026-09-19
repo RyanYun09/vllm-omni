@@ -80,15 +80,18 @@ __all__ = [
 class OrchestratorInputContext:
     """Fixed transition context passed to orchestrator-facing processors.
 
-    There is deliberately **no** ``model_config`` field: a processor that needs
-    a model config reads it through the upstream stage closure, never through
-    this context.
+    ``target_model_config`` / ``next_stage_hf_config`` are populated by the
+    stage client from the stage's own vllm config so that legacy processors
+    (e.g. JoyAI ``joyai_action_to_tts``, Nemotron ``thinker2talker_token_only``)
+    can size next-stage prompts from the target model configuration.
     """
 
     prompt: Any | None = None
     requires_multimodal_data: bool = False
     streaming_context: Any | None = None
     sampling_params: Any | None = None
+    target_model_config: Any | None = None
+    next_stage_hf_config: Any | None = None
 
 
 @runtime_checkable
@@ -234,6 +237,32 @@ def _legacy_shape(signature: inspect.Signature | None) -> str:
     return "c0"
 
 
+def _legacy_ctx_kwargs(signature: inspect.Signature | None, ctx: OrchestratorInputContext) -> dict[str, Any]:
+    """Extract legacy keyword-only config kwargs from ``ctx``.
+
+    Scans the processor signature for keyword-only parameters named
+    ``target_model_config`` / ``next_stage_hf_config`` and forwards the
+    matching ``ctx`` attribute (``None`` included, so ``inspect.Signature.bind``
+    always succeeds and the semantics stay explicit).
+
+    ``sampling_params`` is deliberately **not** included: the C3 branch already
+    injects ``sampling_params=ctx.sampling_params`` explicitly, and forwarding
+    it again would raise ``TypeError: got multiple values for keyword argument
+    'sampling_params'``.
+    """
+    if signature is None:
+        return {}
+    mapping = {
+        "target_model_config": ctx.target_model_config,
+        "next_stage_hf_config": ctx.next_stage_hf_config,
+    }
+    kwargs: dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if param.kind is inspect.Parameter.KEYWORD_ONLY and name in mapping:
+            kwargs[name] = mapping[name]
+    return kwargs
+
+
 def _bind_invoke(fn: Any, signature: inspect.Signature | None, *args: Any, **kwargs: Any) -> Any:
     """Invoke *fn* with a legacy call shape bound via ``inspect.Signature.bind``.
 
@@ -332,6 +361,11 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
         if shape == "moss":
             wrapped = _adapt_moss_processor(fn, signature)
         else:
+            # ``_legacy_shape(None)`` returns "c0", so the c2pos/c3/c2kw
+            # branches below are only reachable with a real signature. Keep the
+            # narrow assert so static analyzers can narrow the optional type
+            # inside the ``_adapted`` closure.
+            assert signature is not None
 
             def _adapted(source_outputs: list[Any], ctx: OrchestratorInputContext) -> Any:
                 if shape == "c3":
@@ -348,14 +382,24 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
                     )
                 if shape == "c2pos":
                     # C2 four-positional legacy fallback (any 4th parameter
-                    # name): the streaming context is the 4th positional arg.
+                    # name): the streaming context is the 4th positional arg,
+                    # unless the 4th parameter is named ``next_stage_hf_config``
+                    # (e.g. Nemotron ``thinker2talker_token_only``), in which
+                    # case the stage client's HF config is passed instead so the
+                    # processor can size the next-stage placeholder prompt.
+                    fourth = (
+                        ctx.next_stage_hf_config
+                        if _positional_names(signature)[3] == "next_stage_hf_config"
+                        else ctx.streaming_context
+                    )
                     return _bind_invoke(
                         fn,
                         signature,
                         source_outputs,
                         ctx.prompt,
                         ctx.requires_multimodal_data,
-                        ctx.streaming_context,
+                        fourth,
+                        **_legacy_ctx_kwargs(signature, ctx),
                     )
                 if shape == "c2kw":
                     # Keyword-only streaming context shell.
@@ -368,7 +412,14 @@ def wrap_orchestrator_processor(fn: Any) -> PlaceholderPromptBuilder | Diffusion
                         streaming_context=ctx.streaming_context,
                     )
                 # C0 3-arg legacy (and the uninspectable / builtin fallback).
-                return _bind_invoke(fn, signature, source_outputs, ctx.prompt, ctx.requires_multimodal_data)
+                return _bind_invoke(
+                    fn,
+                    signature,
+                    source_outputs,
+                    ctx.prompt,
+                    ctx.requires_multimodal_data,
+                    **_legacy_ctx_kwargs(signature, ctx),
+                )
 
             _warn_legacy_contract(fn)
             wrapped = _adapted
