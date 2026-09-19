@@ -447,6 +447,8 @@ class StageEngineCoreClientBase(StageClientBase):
                 prompt=prompt,
                 requires_multimodal_data=self.requires_multimodal_data,
                 streaming_context=streaming_context,
+                target_model_config=getattr(getattr(self, "vllm_config", None), "model_config", None),
+                next_stage_hf_config=getattr(self, "_stage_hf_config", None),
             )
             return invoke_orchestrator_processor(
                 self.custom_process_input_func,

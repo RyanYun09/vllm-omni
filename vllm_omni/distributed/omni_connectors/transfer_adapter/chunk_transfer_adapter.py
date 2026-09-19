@@ -170,6 +170,10 @@ class OmniChunkTransferAdapter(OmniTransferAdapterBase):
             )
         self.connector = self.create_connector(model_config)
         self.receives_chunks = stage_receives_chunks(model_config)
+        # Must exist before super().__init__() starts the save thread, because
+        # _accepts_new_token_ids() is called from _send_single_request() on the
+        # save-loop thread before __init__() would otherwise complete.
+        self._processor_accepts_step_tokens: dict[Callable[..., Any], bool] = {}
         super().__init__(model_config)
         self.model_mode = getattr(model_config, "worker_type", None) or "ar"
         # State specific to Chunk management
