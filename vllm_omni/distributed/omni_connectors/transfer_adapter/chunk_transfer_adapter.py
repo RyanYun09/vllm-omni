@@ -25,27 +25,6 @@ from ..utils.kv_utils import get_local_tp_rank, get_omni_replica_id
 from ..utils.logging import get_connector_logger
 from .base import OmniTransferAdapterBase
 
-import time
-from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, Mapping
-from typing import Any
-
-import torch
-from vllm.v1.metrics.stats import PrefillStats
-from vllm.v1.request import Request, RequestStatus
-from vllm.v1.utils import ConstantList
-
-from vllm_omni.data_entry_keys import MetaStruct, OmniPayloadStruct, unflatten_payload
-from vllm_omni.model_executor.stage_input_processors import resolve_processor
-
-from ..adapter import construct_next_stage_streaming_input_prompt
-from ..factory import OmniConnectorFactory
-from ..utils.config import ConnectorSpec, stage_receives_chunks
-from ..utils.initialization import resolve_connector_spec
-from ..utils.kv_utils import get_local_tp_rank, get_omni_replica_id
-from ..utils.logging import get_connector_logger
-from .base import OmniTransferAdapterBase
-
 logger = get_connector_logger(__name__)
 
 

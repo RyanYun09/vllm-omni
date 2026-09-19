@@ -20,7 +20,6 @@ from vllm_omni.distributed.omni_connectors.utils.config import (
 )
 from vllm_omni.distributed.omni_connectors.utils.initialization import resolve_connector_spec
 from vllm_omni.distributed.omni_connectors.utils.kv_utils import get_local_tp_rank, get_omni_replica_id
-
 from vllm_omni.model_executor.stage_input_processors import (
     ProcessorValidationError,
     resolve_processor,
