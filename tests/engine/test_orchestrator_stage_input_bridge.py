@@ -108,6 +108,7 @@ class FakePrewarmPool:
             )
         )
         self.submitted: list[Any] = []
+        self.stage_client: Any = None  # _build_payload_sender_info fallback (returns None → OK)
 
     async def submit_initial(self, _request_id, _req_state, request, prompt_text=None):
         self.submitted.append(request)
@@ -115,6 +116,10 @@ class FakePrewarmPool:
 
     def get_bound_replica_id(self, _request_id):
         return 0
+
+    def get_bound_client(self, _request_id: str) -> None:
+        """No bound client; _build_payload_sender_info falls back to stage_client (None)."""
+        return None
 
 
 def _request_output(request_id: str) -> RequestOutput:
@@ -482,3 +487,100 @@ def test_prewarm_builder_miss_warns_once_and_caches() -> None:
     assert mock_import.call_count == 1
     inline_estimates = [call for call in mock_warn.call_args_list if call.args and "inline estimate" in call.args[0]]
     assert len(inline_estimates) == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: configured async_chunk_prewarm_prompt_len must survive the
+# inline-estimate fallback (amy-why-3459 review of HEAD 22e3a258).
+# ---------------------------------------------------------------------------
+
+
+def _override_orchestrator(client: Any) -> Orchestrator:
+    """Orchestrator whose downstream stage declares a 37-token prefill boundary."""
+    orch = object.__new__(Orchestrator)
+    orch.stage_pools = [
+        SimpleNamespace(
+            stage_client=client,
+            stage_vllm_config=SimpleNamespace(
+                model_config=SimpleNamespace(
+                    max_model_len=64,
+                    hf_config=SimpleNamespace(async_chunk_prewarm_prompt_len=37),
+                ),
+            ),
+        )
+    ]
+    return orch
+
+
+def test_prewarm_override_keeps_configured_length_on_builder_miss() -> None:
+    """A stage WITHOUT a builder keeps ``async_chunk_prewarm_prompt_len``.
+
+    Regression for amy-why-3459's review: the configured override (e.g. the
+    Nemotron deployment's 37-token speaker-prompt prefill) must survive the
+    inline-estimate fallback, not be replaced by the generic upstream estimate.
+    """
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _override_orchestrator(_Client())
+    fake_module = SimpleNamespace()
+    req_state = OrchestratorRequestState(
+        request_id="req-override-miss",
+        prompt={"prompt": "hi"},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)),
+        patch("importlib.import_module", return_value=fake_module),
+        patch.object(orch_module.logger, "warning"),
+    ):
+        base_input = orch._build_prewarm_placeholder_input(0, "req-override-miss", [1, 2], req_state)
+
+    # The configured 37-token prefill boundary wins over the tiny [1, 2] estimate.
+    assert base_input["prompt_token_ids"] == [0] * 37
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
+
+
+def test_prewarm_override_keeps_configured_length_on_builder_failure() -> None:
+    """A builder that RAISES falls back to the inline estimate AND keeps the override."""
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _broken_build_prewarm_placeholder(**kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("boom")
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    _sync_hook.build_prewarm_placeholder = _broken_build_prewarm_placeholder  # type: ignore[attr-defined]
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _override_orchestrator(_Client())
+    req_state = OrchestratorRequestState(
+        request_id="req-override-fail",
+        prompt={"prompt": "hi"},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)),
+        patch.object(orch_module.logger, "warning"),
+    ):
+        base_input = orch._build_prewarm_placeholder_input(0, "req-override-fail", [1, 2], req_state)
+
+    # Builder failure must not lose the configured override either.
+    assert base_input["prompt_token_ids"] == [0] * 37
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
