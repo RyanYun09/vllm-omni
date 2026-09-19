@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 # Copyright 2025 The vLLM-Omni team.
 """Stage input processors for Ming-flash-omni-2.0 multi-stage pipeline."""
 
@@ -240,7 +241,7 @@ def _slice_patch_hidden(
         logger.warning("[thinker2imagegen] %s: missing final_hidden_states (keys=%s)", tag, list(mm_out.keys()))
         return None
 
-    prompt_ids = _ensure_list(thinker_output.prompt_token_ids)
+    prompt_ids = _common.ensure_list_strict(thinker_output.prompt_token_ids)
     prompt_ids_t = torch.tensor(prompt_ids, dtype=torch.long, device=full_hidden.device)
     patch_indices = (prompt_ids_t == image_patch_token_id).nonzero(as_tuple=False).squeeze(-1)
     total_patches = int(patch_indices.numel())

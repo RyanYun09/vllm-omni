@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Orchestrator dispatch wrap-once semantics (RFC #4872).
+"""Orchestrator dispatch wrap-once semantics.
 
 ``invoke_orchestrator_processor`` runs per request (and per forward), so
 ``wrap_orchestrator_processor`` must not re-wrap — and must not re-emit the
@@ -110,7 +110,7 @@ def test_c1_processor_passes_through_without_warning():
 
 
 # ---------------------------------------------------------------------------
-# P1 deep-dive: keyword-only semantic kwargs + four-positional fallback.
+# Keyword-only semantic kwargs + four-positional fallback.
 # ---------------------------------------------------------------------------
 
 

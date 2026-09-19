@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Stage input processor for Step-Audio2: Thinker → Token2Wav transition."""
 
 from typing import Any
@@ -17,15 +18,6 @@ from vllm_omni.model_executor.models.step_audio2.step_audio2_constants import (
 from vllm_omni.model_executor.stage_input_processors import _common
 
 logger = init_logger(__name__)
-
-
-def _ensure_list(x):
-    """Convert ConstantList / tensor / iterable to Python list.
-
-    Preserves ``None`` as ``[None]`` (step_audio2 semantics): delegates to
-    ``_common.ensure_list_preserve_none``.
-    """
-    return _common.ensure_list_preserve_none(x)
 
 
 # =========================
@@ -76,8 +68,8 @@ def thinker2token2wav_async_chunk(
 
     # Only look at decode (generated) tokens — the prompt may contain
     # historical audio tokens from prior conversation turns.
-    all_token_ids = _ensure_list(request.all_token_ids)
-    prompt_len = len(_ensure_list(request.prompt_token_ids))
+    all_token_ids = _common.ensure_list_preserve_none(request.all_token_ids)
+    prompt_len = len(_common.ensure_list_preserve_none(request.prompt_token_ids))
     generated_ids = all_token_ids[prompt_len:]
 
     # Extract audio tokens and convert to 0-based IDs for Token2Wav

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """AURA Omni pipeline topology.
 
 Semantic modules:
@@ -18,8 +18,8 @@ from vllm_omni.config.stage_config import (
     StagePipelineConfig,
 )
 
-# RFC #4872 P6: talker stop token single-sourced in the shared constants
-# module (also used by qwen3_omni / qwen3_tts pipelines).
+# Talker stop token single-sourced in the shared constants module (also used
+# by qwen3_omni / qwen3_tts pipelines).
 from vllm_omni.model_executor.stage_input_processors._constants import QWEN3_CODEC_EOS_TOKEN_ID
 
 _AURA_PROC = "vllm_omni.model_executor.stage_input_processors.aura_omni"

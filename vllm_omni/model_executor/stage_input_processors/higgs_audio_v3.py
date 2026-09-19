@@ -328,7 +328,7 @@ def _flush_async_chunk(
 
     codes_qt = torch.tensor(window_rows, dtype=torch.long).t().contiguous()
     try:
-        de_delayed = _revert_delay_pattern(codes_qt)
+        de_delayed = _common.revert_delay_pattern(codes_qt, expected_codebooks=_NUM_CODEBOOKS, allow_short=False)
     except ValueError:
         logger.warning(
             "async_chunk: insufficient frames for delay pattern reversal "

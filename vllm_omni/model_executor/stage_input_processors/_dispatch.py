@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Orchestrator input-dispatch contract layer (RFC #4872).
+"""Orchestrator input-dispatch contract layer.
 
 This module defines the **consumer-side (orchestrator / stage-client) dispatch
 contract** for ``stage_input_processors``.  It replaces the two inconsistent
@@ -255,8 +255,7 @@ def _warn_legacy_contract(fn: Any) -> None:
     name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None) or repr(fn)
     warnings.warn(
         f"stage-input processor {name!r} uses the legacy positional contract; "
-        "migrate it to the OrchestratorInputContext contract "
-        "(RFC #4872 Phase 2).",
+        "migrate it to the OrchestratorInputContext contract.",
         DeprecationWarning,
         stacklevel=2,
     )

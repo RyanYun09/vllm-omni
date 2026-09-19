@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import torch
 from vllm.inputs import TextPrompt
 from vllm.logger import init_logger
 
 from vllm_omni.inputs.data import OmniTokensPrompt
+from vllm_omni.model_executor.stage_input_processors import _common
 
 logger = init_logger(__name__)
 
@@ -75,24 +75,6 @@ def _extract_text_cond(ar_output: Any) -> Any:
     return None
 
 
-def _to_cpu_tensor(text_cond: Any) -> torch.Tensor:
-    """Coerce the emitted condition to a single 2-D CPU tensor."""
-    if isinstance(text_cond, list):
-        if not text_cond:
-            raise ValueError("AuK encoder emitted an empty text condition list")
-        parts = [_to_cpu_tensor(part) for part in text_cond]
-        return torch.cat(parts, dim=0) if len(parts) > 1 else parts[0]
-    if isinstance(text_cond, torch.Tensor):
-        tensor = text_cond
-    else:
-        # numpy array or any array-like the connector round-tripped.
-        tensor = torch.as_tensor(text_cond)
-    tensor = tensor.detach().cpu()
-    if tensor.ndim != 2:
-        raise ValueError(f"AuK text condition must be [tokens, hidden]; got shape {tuple(tensor.shape)}")
-    return tensor
-
-
 def encoder2dit(
     source_outputs: list[Any],
     prompt: OmniTokensPrompt | TextPrompt | list | None = None,
@@ -118,7 +100,11 @@ def encoder2dit(
             "AuK encoder stage produced no hidden_states.output multimodal payload; "
             "stage 1 cannot run without the fused thinker hidden states"
         )
-    prompt_embeds = _to_cpu_tensor(text_cond)
+    prompt_embeds = _common.to_cpu_tensor(text_cond)
+    if prompt_embeds is None:
+        raise ValueError("AuK encoder emitted no text condition tensor for stage 1")
+    if prompt_embeds.ndim != 2:
+        raise ValueError(f"AuK text condition must be [tokens, hidden]; got shape {tuple(prompt_embeds.shape)}")
 
     original = _as_dict(prompt)
     original_knobs = original.get("additional_information") or {}
