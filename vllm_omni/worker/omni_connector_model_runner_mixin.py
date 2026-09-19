@@ -10,15 +10,6 @@ from vllm_omni.distributed.omni_connectors.model_runner.omni_connector_runtime i
     needs_omni_connector,
     should_accumulate_full_payload_output,
 )
-from vllm_omni.model_executor.stage_input_processors import (
-    ProcessorValidationError,
-    resolve_processor,
-)
-from vllm_omni.outputs import OmniConnectorOutput
-from vllm_omni.worker.payload_span import (
-    get_tensor_span,
-    merge_tensor_spans,
-)
 
 __all__ = [
     "OmniConnectorModelRunnerMixin",

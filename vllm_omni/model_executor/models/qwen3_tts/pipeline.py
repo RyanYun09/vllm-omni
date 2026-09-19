@@ -10,14 +10,14 @@ from vllm_omni.config.stage_config import (
     StageExecutionType,
     StagePipelineConfig,
 )
-from vllm_omni.outputs.output_modality import (
-    TensorAccumulationStrategy,
-    register_key_accumulation_strategy,
-)
 
 # Talker stop token single-sourced in the shared constants module (also used
 # by qwen3_omni / aura_omni pipelines).
 from vllm_omni.model_executor.stage_input_processors._constants import QWEN3_CODEC_EOS_TOKEN_ID
+from vllm_omni.outputs.output_modality import (
+    TensorAccumulationStrategy,
+    register_key_accumulation_strategy,
+)
 
 _PROC = "vllm_omni.model_executor.stage_input_processors.qwen3_tts"
 
