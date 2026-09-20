@@ -248,8 +248,8 @@ def test_real_guard_assembles_generate_and_evaluate_argv(monkeypatch: pytest.Mon
     assert int(evaluate[evaluate.index("--eval-workers") + 1]) == config["judge"].get("eval_workers", 4)
 
 
-def test_real_guard_uses_dataset_revision_when_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """When ``dataset_revision`` is set, the dataset ref becomes ``ds@rev``."""
+def test_real_guard_rejects_unsupported_dataset_revision(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Non-null ``dataset_revision`` is currently unsupported and must raise."""
     from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
 
     config = _load_config()
@@ -259,10 +259,8 @@ def test_real_guard_uses_dataset_revision_when_set(monkeypatch: pytest.MonkeyPat
     patched["dataset_revision"] = "abcd1234"
     monkeypatch.setattr(guard, "_load_ci_config", lambda: patched)
 
-    calls = _call_real_guard(monkeypatch, tmp_path)
-    generate, evaluate = calls
-    assert generate[generate.index("--dataset") + 1] == f"{config['dataset']}@abcd1234"
-    assert evaluate[evaluate.index("--dataset") + 1] == f"{config['dataset']}@abcd1234"
+    with pytest.raises(NotImplementedError, match="dataset_revision pinning is not yet supported"):
+        _call_real_guard(monkeypatch, tmp_path)
 
 
 def test_real_guard_fails_on_low_rtd_content(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -308,19 +306,44 @@ def test_real_guard_fails_on_missing_score_files(monkeypatch: pytest.MonkeyPatch
         _call_real_guard(monkeypatch, tmp_path)
 
 
-def test_real_guard_fails_on_protocol_pin_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Real guard raises when its PROTOCOL_PIN constant drifts from the one
-    embedded in ``summarize_scores()`` output.
-
-    ``summarize_scores()`` hardcodes the pin, so the mismatch is simulated by
-    patching the guard module's copy of the constant.
+def test_real_guard_fails_on_stale_score_file_protocol_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Real guard raises when an individual score file's protocol_pin does not
+    match the configured pin (simulates stale files from a previous protocol version).
     """
     from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
 
     config = _load_config()
     _write_scores_from_config(tmp_path / "scores", config)
-    monkeypatch.setattr(guard, "PROTOCOL_PIN", "deadbeef")
-    with pytest.raises(AssertionError, match="protocol_pin changed"):
+
+    # Force the config pin back to the real value so the config-vs-constant
+    # check passes; the per-file check should still fail because one file
+    # contains a stale pin.
+    monkeypatch.setattr(guard, "PROTOCOL_PIN", PROTOCOL_PIN)
+    monkeypatch.setattr(guard, "_load_ci_config", lambda: config)
+
+    # Overwrite one score file with a stale pin
+    rtd_dir = tmp_path / "scores" / "RTD_world_knowledge"
+    stale = json.loads((rtd_dir / "360.json").read_text(encoding="utf-8"))
+    stale["protocol_pin"] = "deadbeef"
+    (rtd_dir / "360.json").write_text(json.dumps(stale), encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="protocol_pin mismatch"):
+        _call_real_guard(monkeypatch, tmp_path)
+
+
+def test_real_guard_fails_when_config_protocol_pin_drifts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Real guard raises when the JSON config's protocol_pin drifts from the
+    source-of-truth constant in the Python code."""
+    from tests.e2e.accuracy.omni_duplex_eval import test_omni_duplex_eval_ci as guard
+
+    config = _load_config()
+    _write_scores_from_config(tmp_path / "scores", config)
+
+    patched = dict(config)
+    patched["protocol_pin"] = "deadbeef"
+    monkeypatch.setattr(guard, "_load_ci_config", lambda: patched)
+
+    with pytest.raises(AssertionError, match="does not match source of truth"):
         _call_real_guard(monkeypatch, tmp_path)
 
 

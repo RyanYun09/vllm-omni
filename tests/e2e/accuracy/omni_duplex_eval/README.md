@@ -62,8 +62,13 @@ Example (any OpenAI-compatible vLLM server):
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768
+  --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768 \
+  --allowed-local-media-path /tmp/omni_duplex_ci
 ```
+
+If the judge is started on a different host or the media temporary directory
+changes, adjust `--allowed-local-media-path` to match the path used by
+`vllm bench omni-duplex-eval evaluate` for materialized videos.
 
 ## CPU mock tests (no GPU / model / judge needed)
 

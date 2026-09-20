@@ -64,10 +64,13 @@ def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> 
     exclude = set(config.get("exclude_ids", []))
     sample_ids = [sid for sid in all_ids if sid not in exclude]
 
+    # Validate dataset_revision (reserved for future pinning; not yet supported).
+    dataset_revision = config.get("dataset_revision")
+    if dataset_revision:
+        raise NotImplementedError(f"dataset_revision pinning is not yet supported (got {dataset_revision!r}).")
+
     # Phase 1: Generate
     dataset_ref = config["dataset"]
-    if config.get("dataset_revision"):
-        dataset_ref = f"{dataset_ref}@{config['dataset_revision']}"
     _run_cli(
         [
             "vllm",
@@ -122,8 +125,23 @@ def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> 
         ]
     )
 
-    score_files = list(Path(score_root).rglob("*.json"))
+    # Sanity check: config pin must match the runtime source-of-truth constant.
+    config_pin = config.get("protocol_pin")
+    assert config_pin == PROTOCOL_PIN, (
+        f"config protocol_pin {config_pin!r} does not match source of truth {PROTOCOL_PIN!r}"
+    )
+
+    score_files = [p for p in Path(score_root).rglob("*.json") if not p.name.endswith("_summary.json")]
     assert len(score_files) == len(sample_ids), f"expected {len(sample_ids)} score files, found {len(score_files)}"
+
+    # Validate each score file is consistent with the configured protocol pin.
+    mismatches = []
+    for sf in score_files:
+        row = json.loads(sf.read_text(encoding="utf-8"))
+        row_pin = row.get("protocol_pin")
+        if row_pin != config_pin:
+            mismatches.append(f"{sf.name}: {row_pin!r} != {config_pin!r}")
+    assert not mismatches, "protocol_pin mismatch in score files:\n" + "\n".join(mismatches)
 
     # Phase 3: Summarize + persist result JSON (Buildkite artifact upload pattern)
     summary = summarize_scores(score_root)
