@@ -50,7 +50,7 @@ _DUPLEX_SERVER_PARAMS = list(DUPLEX_TEST_PARAMS)
 _RESULT_DIR = Path(__file__).resolve().parent / "results"
 
 
-@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3"}, num_cards=1)
+@hardware_test(res={"cuda": ["H100", "B200"], "npu": "A3"}, num_cards=2)
 @pytest.mark.parametrize("omni_server", _DUPLEX_SERVER_PARAMS, indirect=True)
 def test_omni_duplex_eval_ci(omni_server, tmp_path: Path, judge_server: str) -> None:
     """CI guard: generate -> evaluate -> summarize -> assert scores."""
