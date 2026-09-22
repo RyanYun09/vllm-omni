@@ -222,8 +222,8 @@ def test_real_guard_assembles_generate_and_evaluate_argv(monkeypatch: pytest.Mon
 
     assert len(calls) == 2, f"expected generate + evaluate, got {len(calls)} calls"
     generate, evaluate = calls
-    assert generate[:4] == ["vllm", "bench", "omni-duplex-eval", "generate"]
-    assert evaluate[:4] == ["vllm", "bench", "omni-duplex-eval", "evaluate"]
+    assert generate[:5] == ["vllm", "bench", "omni-duplex-eval", "--omni", "generate"]
+    assert evaluate[:5] == ["vllm", "bench", "omni-duplex-eval", "--omni", "evaluate"]
 
     # generate: dataset ref, split, ids, url, model, ref-audio, response-root
     assert generate[generate.index("--dataset") + 1] == config["dataset"]

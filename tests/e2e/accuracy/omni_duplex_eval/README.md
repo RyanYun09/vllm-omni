@@ -62,7 +62,7 @@ Example (any OpenAI-compatible vLLM server):
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 32768 \
+  --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001 --max-model-len 65536 \
   --allowed-local-media-path /tmp/omni_duplex_ci
 ```
 
