@@ -52,8 +52,7 @@ def _parse_visible_devices() -> tuple[str, list[str]]:
     return env_key, devices
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _isolate_omni_server_device() -> None:
+def _isolate_omni_server_device_impl() -> None:
     """Save original device allocation, then pin Omni server to device[1]."""
     global _ORIGINAL_VISIBLE_DEVICES
     env_key, devices = _parse_visible_devices()
@@ -62,6 +61,12 @@ def _isolate_omni_server_device() -> None:
     if len(devices) >= 2:
         # Explicitly override (setdefault is a no-op when already set).
         os.environ[env_key] = devices[1]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_omni_server_device() -> None:
+    """Session-scoped wrapper around ``_isolate_omni_server_device_impl``."""
+    _isolate_omni_server_device_impl()
 
 
 @pytest.fixture(scope="module")

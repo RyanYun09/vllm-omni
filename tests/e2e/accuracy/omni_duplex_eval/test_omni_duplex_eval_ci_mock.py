@@ -23,11 +23,13 @@ Also includes unit tests for the ``judge_server`` fixture endpoint resolution,
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from tests.e2e.accuracy.omni_duplex_eval import conftest
 from vllm_omni.benchmarks.duplex.omni_duplex_eval_eval import summarize_scores
 from vllm_omni.benchmarks.duplex.omni_duplex_eval_metrics import PROTOCOL_PIN
 
@@ -443,3 +445,136 @@ def test_summarize_scores_empty(score_root: Path) -> None:
     assert summary["samples"] == 0
     assert "rtd" not in summary
     assert "pr" not in summary
+
+
+# ---------------------------------------------------------------------------
+# _parse_visible_devices / _isolate_omni_server_device unit tests
+#
+# These run the *real* device-allocation logic from conftest.py on a CPU host
+# by faking the torch device probes, covering both unset and pre-populated
+# visibility variables (reviewer-requested coverage).
+# ---------------------------------------------------------------------------
+
+
+class _FakeAccelerator:
+    """Minimal ``torch.accelerator`` stand-in for CPU mock tests."""
+
+    def __init__(self, count: int) -> None:
+        self._count = count
+
+    def device_count(self) -> int:
+        return self._count
+
+
+class _FakeNpu:
+    """Minimal ``torch.npu`` stand-in for CPU mock tests."""
+
+    def __init__(self, available: bool) -> None:
+        self._available = available
+
+    def is_available(self) -> bool:
+        return self._available
+
+
+def _patch_torch_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    available: bool,
+    count: int = 0,
+) -> None:
+    """Route the conftest probes to the CUDA branch."""
+    monkeypatch.setattr(conftest.torch.cuda, "is_available", lambda: available)
+    # ``torch.accelerator`` may not exist on older torch builds.
+    monkeypatch.setattr(conftest.torch, "accelerator", _FakeAccelerator(count), raising=False)
+    # Ensure the NPU branch is never selected while testing the CUDA path.
+    monkeypatch.setattr(conftest.torch, "npu", _FakeNpu(False), raising=False)
+
+
+def _patch_torch_npu(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    available: bool,
+    count: int = 0,
+) -> None:
+    """Route the conftest probes to the NPU branch."""
+    monkeypatch.setattr(conftest.torch, "npu", _FakeNpu(available), raising=False)
+    monkeypatch.setattr(conftest.torch, "accelerator", _FakeAccelerator(count), raising=False)
+    # Ensure the CUDA branch is never selected while testing the NPU path.
+    monkeypatch.setattr(conftest.torch.cuda, "is_available", lambda: False)
+
+
+def _run_isolation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Run the real isolation logic, return the saved original devices.
+
+    ``monkeypatch`` also restores the global and environment afterwards.
+    """
+    monkeypatch.setattr(conftest, "_ORIGINAL_VISIBLE_DEVICES", None)
+    conftest._isolate_omni_server_device_impl()
+    assert conftest._ORIGINAL_VISIBLE_DEVICES is not None
+    return conftest._ORIGINAL_VISIBLE_DEVICES
+
+
+def test_parse_visible_devices_cuda_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CUDA pre-populated ``2,3``: Omni -> device 3, judge -> device 2."""
+    _patch_torch_cuda(monkeypatch, available=True)
+    monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+
+    env_key, devices = conftest._parse_visible_devices()
+    assert env_key == "CUDA_VISIBLE_DEVICES"
+    assert devices == ["2", "3"]
+
+    original = _run_isolation(monkeypatch)
+    assert original == ["2", "3"]
+    # Explicit override (not setdefault): the CI-preset allocation is honored.
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+    # Judge derives its device from the original allocation, never outside it.
+    assert original[0] == "2"
+
+
+def test_parse_visible_devices_cuda_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CUDA unset with 2 physical GPUs: IDs fall back to 0,1."""
+    _patch_torch_cuda(monkeypatch, available=True, count=2)
+    monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    env_key, devices = conftest._parse_visible_devices()
+    assert env_key == "CUDA_VISIBLE_DEVICES"
+    assert devices == ["0", "1"]
+
+    original = _run_isolation(monkeypatch)
+    assert original == ["0", "1"]
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"
+    assert original[0] == "0"
+
+
+def test_parse_visible_devices_npu_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NPU pre-populated ``0,1``: Omni -> device 1, judge -> device 0."""
+    _patch_torch_npu(monkeypatch, available=True)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "0,1")
+
+    env_key, devices = conftest._parse_visible_devices()
+    assert env_key == "ASCEND_RT_VISIBLE_DEVICES"
+    assert devices == ["0", "1"]
+
+    original = _run_isolation(monkeypatch)
+    assert original == ["0", "1"]
+    assert os.environ["ASCEND_RT_VISIBLE_DEVICES"] == "1"
+    assert original[0] == "0"
+
+
+def test_parse_visible_devices_npu_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NPU unset with 2 physical NPUs: IDs fall back to 0,1."""
+    _patch_torch_npu(monkeypatch, available=True, count=2)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
+
+    env_key, devices = conftest._parse_visible_devices()
+    assert env_key == "ASCEND_RT_VISIBLE_DEVICES"
+    assert devices == ["0", "1"]
+
+    original = _run_isolation(monkeypatch)
+    assert original == ["0", "1"]
+    assert os.environ["ASCEND_RT_VISIBLE_DEVICES"] == "1"
+    assert original[0] == "0"
