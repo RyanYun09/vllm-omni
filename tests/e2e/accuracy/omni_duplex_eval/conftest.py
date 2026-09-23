@@ -5,14 +5,37 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 import requests
 import torch
+
+_CONFIG_PATH = Path(__file__).parent / "omni_duplex_eval_ci_config.json"
+
+
+def _load_judge_model() -> str:
+    """Read judge model from CI config, fall back to default."""
+    try:
+        config = json.loads(_CONFIG_PATH.read_text())
+        return config.get("judge", {}).get("model", "Qwen/Qwen2.5-VL-7B-Instruct")
+    except Exception:
+        return "Qwen/Qwen2.5-VL-7B-Instruct"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assign_omni_server_to_device_1() -> None:
+    """Pin the Omni server under test to device 1 so it does not
+    compete with the judge subprocess (device 0)."""
+    if torch.cuda.is_available() and torch.accelerator.device_count() > 1:
+        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "1")
+    elif hasattr(torch, "npu") and torch.npu.is_available() and torch.npu.device_count() > 1:
+        os.environ.setdefault("ASCEND_RT_VISIBLE_DEVICES", "1")
 
 
 @pytest.fixture(scope="module")
@@ -48,15 +71,21 @@ def judge_server() -> Generator[str, None, None]:
     env = os.environ.copy()
     if torch.cuda.is_available():
         env["CUDA_VISIBLE_DEVICES"] = "0"
+        env["ASCEND_RT_VISIBLE_DEVICES"] = ""  # clear NPU visibility
     elif hasattr(torch, "npu") and torch.npu.is_available():
         env["ASCEND_RT_VISIBLE_DEVICES"] = "0"
+        env["CUDA_VISIBLE_DEVICES"] = ""  # clear CUDA visibility
+
+    # Ensure the allowed local media path exists before the judge starts.
+    media_path = "/tmp/omni_duplex_ci"
+    os.makedirs(media_path, exist_ok=True)
 
     cmd = [
         "python",
         "-m",
         "vllm.entrypoints.openai.api_server",
         "--model",
-        "Qwen/Qwen2.5-VL-7B-Instruct",
+        _load_judge_model(),
         "--port",
         str(port),
         "--max-model-len",
@@ -67,7 +96,7 @@ def judge_server() -> Generator[str, None, None]:
         "--gpu-memory-utilization",
         "0.85",
         "--allowed-local-media-path",
-        "/tmp/omni_duplex_ci",
+        media_path,
     ]
 
     proc = subprocess.Popen(cmd, env=env)
