@@ -16,11 +16,6 @@ import pytest
 import requests
 import torch
 
-# Original device allocation captured before any fixture mutates the
-# environment. The judge subprocess reads devices[0] from this list so it
-# never selects a device outside the job's allocated set.
-_ORIGINAL_VISIBLE_DEVICES: list[str] | None = None
-
 _CONFIG_PATH = Path(__file__).parent / "omni_duplex_eval_ci_config.json"
 
 
@@ -52,21 +47,17 @@ def _parse_visible_devices() -> tuple[str, list[str]]:
     return env_key, devices
 
 
-def _isolate_omni_server_device_impl() -> None:
-    """Save original device allocation, then pin Omni server to device[1]."""
-    global _ORIGINAL_VISIBLE_DEVICES
+def _omni_server_device_env() -> dict[str, str] | None:
+    """Env overrides pinning the Omni server to device[1] (split from judge).
+
+    Returns ``None`` when fewer than two devices are allocated (nothing to
+    split, e.g. on CPU-only hosts where ``_parse_visible_devices`` yields an
+    empty list). Pure function: never mutates the pytest process environment.
+    """
     env_key, devices = _parse_visible_devices()
-    _ORIGINAL_VISIBLE_DEVICES = devices
-
     if len(devices) >= 2:
-        # Explicitly override (setdefault is a no-op when already set).
-        os.environ[env_key] = devices[1]
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _isolate_omni_server_device() -> None:
-    """Session-scoped wrapper around ``_isolate_omni_server_device_impl``."""
-    _isolate_omni_server_device_impl()
+        return {env_key: devices[1]}
+    return None
 
 
 @pytest.fixture(scope="module")
@@ -79,11 +70,12 @@ def judge_server(
     responds to ``/health``, reuse it (developer convenience).
 
     Otherwise, start the judge as a subprocess:
-    - The judge is pinned to the first device of the *original* allocation
-      (``_ORIGINAL_VISIBLE_DEVICES[0]``), so it never selects a device
-      outside the job's allocated set.
+    - The judge is pinned to the first device of the job's allocation
+      (``devices[0]``), so it never selects a device outside the job's set.
     - The omni server (managed by the ``omni_server`` fixture) is pinned to
-      device[1] by the session-scoped ``_isolate_omni_server_device`` fixture.
+      device[1] via ``OmniServerParams.env_dict`` (see
+      ``_omni_server_device_env``), leaving the pytest process environment
+      untouched.
 
     The fixture terminates the judge on teardown.
     """
@@ -101,8 +93,9 @@ def judge_server(
         except Exception:
             pass
 
-    # Determine judge device from original allocation.
-    judge_dev = _ORIGINAL_VISIBLE_DEVICES[0] if _ORIGINAL_VISIBLE_DEVICES else "0"
+    # Determine judge device from the job's device allocation.
+    _, devices = _parse_visible_devices()
+    judge_dev = devices[0] if devices else "0"
 
     # Build device-isolated environment.
     env = os.environ.copy()

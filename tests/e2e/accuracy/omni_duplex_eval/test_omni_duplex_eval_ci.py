@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.accuracy.omni_duplex_eval import conftest as _omni_conftest
 from tests.e2e.online_serving.helpers.minicpmo_4_5_duplex import (
     SERVER_PARAMS as DUPLEX_TEST_PARAMS,
 )
@@ -44,7 +45,17 @@ def _load_ci_config() -> dict:
 
 pytestmark = [pytest.mark.full_model, pytest.mark.omni]
 
-_DUPLEX_SERVER_PARAMS = list(DUPLEX_TEST_PARAMS)
+# Dynamically inject the sub-process device isolation env_dict to avoid mutating
+# the pytest parent process's os.environ (which causes leaks to other multi-GPU
+# tests in the same session). ``_omni_server_device_env()`` returns ``None`` on
+# CPU-only hosts (no device split), which matches the default ``env_dict=None``.
+_DUPLEX_SERVER_PARAMS = [
+    pytest.param(
+        p.values[0]._replace(env_dict=_omni_conftest._omni_server_device_env()),
+        id=p.id,
+    )
+    for p in DUPLEX_TEST_PARAMS
+]
 
 
 _RESULT_DIR = Path(__file__).resolve().parent / "results"

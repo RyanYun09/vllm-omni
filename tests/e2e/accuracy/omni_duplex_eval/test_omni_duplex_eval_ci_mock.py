@@ -448,11 +448,17 @@ def test_summarize_scores_empty(score_root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _parse_visible_devices / _isolate_omni_server_device unit tests
+# _parse_visible_devices / _omni_server_device_env unit tests
 #
 # These run the *real* device-allocation logic from conftest.py on a CPU host
 # by faking the torch device probes, covering both unset and pre-populated
 # visibility variables (reviewer-requested coverage).
+#
+# The key regression property: ``_omni_server_device_env()`` returns
+# per-subprocess env overrides for the Omni server without ever mutating the
+# pytest parent process's environment (a session-scoped mutation previously
+# leaked a narrowed ``CUDA_VISIBLE_DEVICES``/``ASCEND_RT_VISIBLE_DEVICES`` to
+# unrelated multi-GPU tests in the same pytest session).
 # ---------------------------------------------------------------------------
 
 
@@ -503,19 +509,8 @@ def _patch_torch_npu(
     monkeypatch.setattr(conftest.torch.cuda, "is_available", lambda: False)
 
 
-def _run_isolation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Run the real isolation logic, return the saved original devices.
-
-    ``monkeypatch`` also restores the global and environment afterwards.
-    """
-    monkeypatch.setattr(conftest, "_ORIGINAL_VISIBLE_DEVICES", None)
-    conftest._isolate_omni_server_device_impl()
-    assert conftest._ORIGINAL_VISIBLE_DEVICES is not None
-    return conftest._ORIGINAL_VISIBLE_DEVICES
-
-
 def test_parse_visible_devices_cuda_preset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CUDA pre-populated ``2,3``: Omni -> device 3, judge -> device 2."""
+    """CUDA pre-populated ``2,3``: Omni env -> device 3, judge -> device 2."""
     _patch_torch_cuda(monkeypatch, available=True)
     monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
@@ -524,12 +519,12 @@ def test_parse_visible_devices_cuda_preset(monkeypatch: pytest.MonkeyPatch) -> N
     assert env_key == "CUDA_VISIBLE_DEVICES"
     assert devices == ["2", "3"]
 
-    original = _run_isolation(monkeypatch)
-    assert original == ["2", "3"]
-    # Explicit override (not setdefault): the CI-preset allocation is honored.
-    assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
-    # Judge derives its device from the original allocation, never outside it.
-    assert original[0] == "2"
+    # Per-subprocess override for the Omni server (parent env untouched).
+    assert conftest._omni_server_device_env() == {"CUDA_VISIBLE_DEVICES": "3"}
+    # Judge derives its device from the job allocation, never outside it.
+    assert devices[0] == "2"
+    # Regression: the pytest parent process env is not mutated.
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "2,3"
 
 
 def test_parse_visible_devices_cuda_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,14 +537,14 @@ def test_parse_visible_devices_cuda_unset(monkeypatch: pytest.MonkeyPatch) -> No
     assert env_key == "CUDA_VISIBLE_DEVICES"
     assert devices == ["0", "1"]
 
-    original = _run_isolation(monkeypatch)
-    assert original == ["0", "1"]
-    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"
-    assert original[0] == "0"
+    assert conftest._omni_server_device_env() == {"CUDA_VISIBLE_DEVICES": "1"}
+    assert devices[0] == "0"
+    # Regression: unset stays unset in the parent process.
+    assert "CUDA_VISIBLE_DEVICES" not in os.environ
 
 
 def test_parse_visible_devices_npu_preset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """NPU pre-populated ``0,1``: Omni -> device 1, judge -> device 0."""
+    """NPU pre-populated ``0,1``: Omni env -> device 1, judge -> device 0."""
     _patch_torch_npu(monkeypatch, available=True)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "0,1")
@@ -558,10 +553,10 @@ def test_parse_visible_devices_npu_preset(monkeypatch: pytest.MonkeyPatch) -> No
     assert env_key == "ASCEND_RT_VISIBLE_DEVICES"
     assert devices == ["0", "1"]
 
-    original = _run_isolation(monkeypatch)
-    assert original == ["0", "1"]
-    assert os.environ["ASCEND_RT_VISIBLE_DEVICES"] == "1"
-    assert original[0] == "0"
+    assert conftest._omni_server_device_env() == {"ASCEND_RT_VISIBLE_DEVICES": "1"}
+    assert devices[0] == "0"
+    # Regression: the pytest parent process env is not mutated.
+    assert os.environ["ASCEND_RT_VISIBLE_DEVICES"] == "0,1"
 
 
 def test_parse_visible_devices_npu_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -574,7 +569,46 @@ def test_parse_visible_devices_npu_unset(monkeypatch: pytest.MonkeyPatch) -> Non
     assert env_key == "ASCEND_RT_VISIBLE_DEVICES"
     assert devices == ["0", "1"]
 
-    original = _run_isolation(monkeypatch)
-    assert original == ["0", "1"]
-    assert os.environ["ASCEND_RT_VISIBLE_DEVICES"] == "1"
-    assert original[0] == "0"
+    assert conftest._omni_server_device_env() == {"ASCEND_RT_VISIBLE_DEVICES": "1"}
+    assert devices[0] == "0"
+    # Regression: unset stays unset in the parent process.
+    assert "ASCEND_RT_VISIBLE_DEVICES" not in os.environ
+
+
+def test_omni_server_device_env_single_device_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single device (or CPU-only) allocation: no split, no env override."""
+    _patch_torch_cuda(monkeypatch, available=True, count=1)
+    monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    env_key, devices = conftest._parse_visible_devices()
+    assert env_key == "CUDA_VISIBLE_DEVICES"
+    assert devices == ["0"]
+    assert conftest._omni_server_device_env() is None
+    assert "CUDA_VISIBLE_DEVICES" not in os.environ
+
+
+def test_omni_server_device_env_leaves_parent_visibility_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: configuring/tearing down the split never narrows the parent.
+
+    A session-scoped mutation used to permanently change the pytest process
+    environment; this test asserts the parent visibility variables are byte-for-
+    byte identical before and after repeated device-split configuration.
+    """
+    _patch_torch_cuda(monkeypatch, available=True)
+    monkeypatch.delenv("ASCEND_RT_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+
+    before = os.environ.copy()
+    for _ in range(3):
+        env_dict = conftest._omni_server_device_env()
+        assert env_dict == {"CUDA_VISIBLE_DEVICES": "3"}
+        # Simulate the server teardown: nothing to undo because the parent
+        # environment was never touched in the first place.
+    after = os.environ.copy()
+    assert after == before
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "2,3"
