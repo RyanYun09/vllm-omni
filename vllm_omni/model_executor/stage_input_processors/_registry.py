@@ -540,12 +540,21 @@ def validate_processor(fn: Any, *, kind: ProcessorKind, path: str, stage_config:
         # request) so a producer that only *declares* the right names but cannot
         # accept the keyword call (wrong names / positional-only payload params)
         # is rejected at config time; **kwargs producers are compatible.
+        required: tuple[str, ...] = ("transfer_manager", "pooling_output", "request")
+        # A keyword-acceptable is_finished must bind the worker's best-effort
+        # is_finished=True kwarg; otherwise a required one fails with TypeError.
+        is_finished_param = params.get("is_finished")
+        if is_finished_param is not None and is_finished_param.kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            required = required + ("is_finished",)
         _check_producer_keyword_bind(
             signature,
             path=path,
             kind=kind,
             stage_config=stage_config,
-            required=("transfer_manager", "pooling_output", "request"),
+            required=required,
             what="full-payload",
         )
         _check_full_payload_is_finished(params, path=path, kind=kind, stage_config=stage_config)
