@@ -646,6 +646,46 @@ class TestFullPayloadSendWithCustomFunc(unittest.TestCase):
         time.sleep(0.1)
         host.shutdown_omni_connectors()
 
+    def test_full_payload_required_is_finished_kwarg_receives_finished_flag(self):
+        """Keyword-only REQUIRED ``is_finished`` must bind the worker's best-effort kwarg
+        (amy-why-3459 review of HEAD ad81ac3a)."""
+        seen = {}
+
+        def full_payload_func(transfer_manager, pooling_output, request, *, is_finished):
+            seen["connector"] = transfer_manager.connector
+            seen["is_finished"] = is_finished
+            seen["data"] = pooling_output
+            seen["rid"] = request.request_id if request else None
+            return {"processed": True, "finished": is_finished}
+
+        host = MixinHost()
+        host.init_omni_connectors(
+            model_config=_make_model_config(),
+        )
+        host._omni_connector = MockConnector(stage_id=0)
+        host._stage_id = 0
+        host._custom_process_func = full_payload_func
+
+        req = _make_request("req-1")
+        req.is_finished = lambda: True
+        payload = host._build_custom_process_payload(
+            request_id="req-1",
+            request=req,
+            pooling_output={"raw": 100},
+        )
+        self.assertIsNotNone(payload)
+        self.assertEqual(
+            seen,
+            {
+                "connector": host._omni_connector,
+                "is_finished": True,
+                "data": {"raw": 100},
+                "rid": "req-1",
+            },
+        )
+
+        host.shutdown_omni_connectors()
+
 
 class TestKVSentReqIdsAccumulation(unittest.TestCase):
     """Test that kv_sent_req_ids accumulates results from send_kv_cache."""

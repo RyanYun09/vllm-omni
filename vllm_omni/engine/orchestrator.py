@@ -3017,6 +3017,15 @@ class OrchestratorBase:
         cache[stage_id] = builder if builder is not None else _PREWARM_BUILDER_NO_BUILDER
         return builder
 
+    @staticmethod
+    def _apply_prewarm_prompt_len_override(base_input: dict[str, Any], configured_len: int | None) -> dict[str, Any]:
+        """Apply the configured ``async_chunk_prewarm_prompt_len`` override to base_input."""
+        if configured_len is None or int(configured_len) <= 1:
+            return base_input
+        patched = dict(base_input)
+        patched["prompt_token_ids"] = [0] * int(configured_len)
+        return patched
+
     def _build_prewarm_placeholder_input(
         self,
         next_stage_id: int,
@@ -3030,6 +3039,8 @@ class OrchestratorBase:
         when available; otherwise (and on any builder failure) falls back to the
         legacy inline estimate (``max(1, compute_talker_prompt_ids_length(...))``)
         with a warning — the prewarm path must never raise.
+
+        The configured override is applied after both paths (amy-why-3459 review of HEAD ad81ac3a).
         """
         from vllm_omni.model_executor.stage_input_processors import OrchestratorInputContext
 
@@ -3041,6 +3052,11 @@ class OrchestratorBase:
         else:
             base_input = {}
 
+        # Apply the configured async_chunk_prewarm_prompt_len override on both prewarm paths.
+        stage_vllm_config = getattr(self.stage_pools[next_stage_id], "stage_vllm_config", None)
+        model_config = getattr(stage_vllm_config, "model_config", None)
+        prewarm_len = getattr(getattr(model_config, "hf_config", None), "async_chunk_prewarm_prompt_len", None)
+
         prewarm_builder = self._get_prewarm_placeholder_builder(next_stage_id)
         if prewarm_builder is not None:
             try:
@@ -3048,6 +3064,8 @@ class OrchestratorBase:
                     prompt=req_state.prompt,
                     requires_multimodal_data=False,
                     streaming_context=None,
+                    target_model_config=model_config,
+                    next_stage_hf_config=getattr(model_config, "hf_config", None),
                 )
                 placeholders = prewarm_builder(
                     stage0_prompt=prompt_token_ids,
@@ -3065,7 +3083,7 @@ class OrchestratorBase:
                         base_input["prompt_token_ids"] = list(ph_ids)
                         base_input["multi_modal_data"] = None
                         base_input["mm_processor_kwargs"] = None
-                        return base_input
+                        return self._apply_prewarm_prompt_len_override(base_input, prewarm_len)
             except Exception as exc:
                 logger.warning(
                     "[Orchestrator] req=%s: prewarm placeholder builder for "
@@ -3083,22 +3101,10 @@ class OrchestratorBase:
             next_prompt_len = max(1, compute_talker_prompt_ids_length(prompt_token_ids))
         except Exception:
             next_prompt_len = max(1, len(prompt_token_ids))
-        # A stage may size its own prewarmed placeholder prompt via
-        # hf_overrides.async_chunk_prewarm_prompt_len (e.g. a talker whose
-        # engine positions must cover a speaker-prompt prefill; the model
-        # validates the value and reports the right one on mismatch).
-        prewarm_len = getattr(
-            getattr(getattr(self.stage_pools[next_stage_id], "stage_vllm_config", None), "model_config", None),
-            "hf_config",
-            None,
-        )
-        prewarm_len = getattr(prewarm_len, "async_chunk_prewarm_prompt_len", None)
-        if prewarm_len is not None and int(prewarm_len) > 1:
-            next_prompt_len = int(prewarm_len)
         base_input["prompt_token_ids"] = [0] * next_prompt_len
         base_input["multi_modal_data"] = None
         base_input["mm_processor_kwargs"] = None
-        return base_input
+        return self._apply_prewarm_prompt_len_override(base_input, prewarm_len)
 
     def _build_kv_sender_info(
         self,

@@ -62,6 +62,10 @@ def producer_c_full_payload(transfer_manager, multimodal_output, request, is_fin
     return None
 
 
+def producer_d_full_payload(transfer_manager, pooling_output, request, *, is_finished):
+    return None
+
+
 def producer_a_async_chunk(transfer_manager, multimodal_output, request, is_finished=False):
     return None
 
@@ -214,6 +218,25 @@ class TestValidateProcessor:
                 producer_kwargs_full_payload,
                 kind="producer_full_payload",
                 path="pkg.mod.producer_kwargs_full_payload",
+            )
+
+    def test_full_payload_required_keyword_only_is_finished_accepted(self):
+        # Regression for amy-why-3459 review of HEAD ad81ac3a.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            validate_processor(
+                producer_d_full_payload,
+                kind="producer_full_payload",
+                path="pkg.mod.producer_d_full_payload",
+            )
+
+    def test_full_payload_default_is_finished_accepted(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            validate_processor(
+                producer_b_full_payload,
+                kind="producer_full_payload",
+                path="pkg.mod.producer_b_full_payload",
             )
 
     def test_async_chunk_bad_param_names_rejected(self):
@@ -443,6 +466,14 @@ class TestResolveProcessor:
     def test_resolve_full_payload_without_expected_kind(self):
         spec = resolve_processor(_mod_path("producer_b_full_payload"))
         assert spec.kind == "producer_full_payload"
+
+    def test_resolve_full_payload_required_keyword_only_is_finished(self):
+        spec = resolve_processor(
+            _mod_path("producer_d_full_payload"),
+            expected_kind="producer_full_payload",
+        )
+        assert spec.kind == "producer_full_payload"
+        assert spec.fn is producer_d_full_payload
 
     def test_resolve_drop_in_equivalence(self):
         """resolve_processor().fn must be the same object as the legacy lookup."""

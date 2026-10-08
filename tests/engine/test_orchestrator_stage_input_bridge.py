@@ -530,8 +530,8 @@ def test_prewarm_builder_miss_warns_once_and_caches() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _override_orchestrator(client: Any) -> Orchestrator:
-    """Orchestrator whose downstream stage declares a 37-token prefill boundary."""
+def _override_orchestrator(client: Any, prewarm_len: int = 37) -> Orchestrator:
+    """Orchestrator whose downstream stage declares a token prefill boundary."""
     orch = object.__new__(Orchestrator)
     orch.stage_pools = [
         SimpleNamespace(
@@ -539,7 +539,7 @@ def _override_orchestrator(client: Any) -> Orchestrator:
             stage_vllm_config=SimpleNamespace(
                 model_config=SimpleNamespace(
                     max_model_len=64,
-                    hf_config=SimpleNamespace(async_chunk_prewarm_prompt_len=37),
+                    hf_config=SimpleNamespace(async_chunk_prewarm_prompt_len=prewarm_len),
                 ),
             ),
         )
@@ -617,5 +617,110 @@ def test_prewarm_override_keeps_configured_length_on_builder_failure() -> None:
 
     # Builder failure must not lose the configured override either.
     assert base_input["prompt_token_ids"] == [0] * 37
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
+
+
+def test_prewarm_override_keeps_configured_length_on_builder_success() -> None:
+    """Builder hit must still honor ``async_chunk_prewarm_prompt_len`` (amy-why-3459 review of HEAD ad81ac3a)."""
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _build_prewarm_placeholder(**kwargs):  # type: ignore[no-untyped-def]
+        return [{"prompt_token_ids": [0, 0, 0]}]
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    _sync_hook.build_prewarm_placeholder = _build_prewarm_placeholder  # type: ignore[attr-defined]
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _override_orchestrator(_Client())
+    req_state = OrchestratorRequestState(
+        request_id="req-override-success",
+        prompt={"prompt": "hi"},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)),
+        patch.object(orch_module.logger, "warning"),
+    ):
+        base_input = orch._build_prewarm_placeholder_input(0, "req-override-success", [1, 2], req_state)
+
+    assert base_input["prompt_token_ids"] == [0] * 37
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
+
+
+def test_prewarm_no_override_keeps_builder_output_on_builder_success() -> None:
+    """Without a configured override, a builder hit keeps its own output."""
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _build_prewarm_placeholder(**kwargs):  # type: ignore[no-untyped-def]
+        return [{"prompt_token_ids": [7, 8, 9]}]
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    _sync_hook.build_prewarm_placeholder = _build_prewarm_placeholder  # type: ignore[attr-defined]
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _prewarm_orchestrator_with_client(_Client())  # no async_chunk_prewarm_prompt_len
+    req_state = OrchestratorRequestState(
+        request_id="req-no-override-success",
+        prompt={"prompt": "hi"},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)),
+        patch.object(orch_module.logger, "warning"),
+    ):
+        base_input = orch._build_prewarm_placeholder_input(0, "req-no-override-success", [1, 2], req_state)
+
+    assert base_input["prompt_token_ids"] == [7, 8, 9]
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
+
+
+def test_prewarm_override_len_one_keeps_builder_output_on_builder_success() -> None:
+    """A configured length of 1 is not a prefill override: builder output wins."""
+    from vllm_omni.engine import orchestrator as orch_module
+    from vllm_omni.model_executor import stage_input_processors as sip
+
+    def _build_prewarm_placeholder(**kwargs):  # type: ignore[no-untyped-def]
+        return [{"prompt_token_ids": [0, 0, 0]}]
+
+    def _sync_hook(source_outputs, prompt=None, requires_multimodal_data=False):  # type: ignore[no-untyped-def]
+        return []
+
+    _sync_hook.build_prewarm_placeholder = _build_prewarm_placeholder  # type: ignore[attr-defined]
+
+    class _Client:
+        sync_process_input_func = "pkg.mod.fake_token_only"
+
+    orch = _override_orchestrator(_Client(), prewarm_len=1)
+    req_state = OrchestratorRequestState(
+        request_id="req-len-one-success",
+        prompt={"prompt": "hi"},
+        sampling_params_list=[SamplingParams(max_tokens=1), SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    with (
+        patch.object(sip, "resolve_processor", return_value=_FakeProcessorSpec(_sync_hook)),
+        patch.object(orch_module.logger, "warning"),
+    ):
+        base_input = orch._build_prewarm_placeholder_input(0, "req-len-one-success", [1, 2], req_state)
+
+    assert base_input["prompt_token_ids"] == [0, 0, 0]
     assert base_input["multi_modal_data"] is None
     assert base_input["mm_processor_kwargs"] is None
