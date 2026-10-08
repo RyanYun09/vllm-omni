@@ -125,7 +125,7 @@ _SAMPLED_TEXT_STREAM = "_qwen3_omni_sampled_text_stream"
 
 def _is_final_token(request: Any) -> bool | None:
     """Whether the token sampled last ends the Thinker's turn (``None``: unknown)."""
-    output_token_ids = _ensure_list(getattr(request, "output_token_ids", None) or [])
+    output_token_ids = _common.ensure_list_unchanged(getattr(request, "output_token_ids", None) or [])
     count = getattr(request, "output_token_count", None)
     count = len(output_token_ids) if count is None else count
     token = getattr(request, "last_output_token_id", None)

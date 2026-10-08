@@ -2932,6 +2932,7 @@ class OrchestratorBase:
                 remote_bootstrap_addr=bootstrap_addr_from_kv_transfer_config(config),
             )
         }
+
     def _get_prewarm_placeholder_builder(self, stage_id: int) -> Any:
         """Resolve (and cache per stage) the ``build_prewarm_placeholder``.
 
