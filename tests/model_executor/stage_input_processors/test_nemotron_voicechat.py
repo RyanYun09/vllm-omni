@@ -49,9 +49,9 @@ def test_thinker2talker_skips_unfinished() -> None:
 def test_thinker2talker_via_process_engine_inputs_uses_configured_talker_len() -> None:
     """The stage client's ``_stage_hf_config`` reaches the legacy c2pos
     processor as the 4th positional ``next_stage_hf_config`` so the native
-    talker placeholder is sized to ``talker_init_len`` (#6801 P1 #2).  Before
-    the fix ``ctx.streaming_context`` (None) was passed instead and the
-    placeholder fell back to one token.
+    talker placeholder is sized to ``talker_init_len``.  Before the fix
+    ``ctx.streaming_context`` (None) was passed instead and the placeholder
+    fell back to one token.
     """
     from vllm_omni.engine.stage_engine_core_client import StageEngineCoreClient
 
@@ -70,7 +70,7 @@ def test_thinker2talker_via_process_engine_inputs_uses_configured_talker_len() -
 
 def test_thinker2talker_via_process_engine_inputs_falls_back_without_config() -> None:
     """Without ``_stage_hf_config`` the legacy processor keeps its one-token
-    placeholder fallback, preserving backward-compatible semantics (#6801).
+    placeholder fallback, preserving backward-compatible semantics.
     """
     from vllm_omni.engine.stage_engine_core_client import StageEngineCoreClient
 

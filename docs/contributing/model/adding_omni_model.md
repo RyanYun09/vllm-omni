@@ -493,7 +493,7 @@ thinker_hidden_states = output.multimodal_output["24"]
 Create stage transition processors in `vllm_omni/model_executor/stage_input_processors/your_model_name.py`. Each inter-stage edge should provide a **coherent processor set** rather than a single monolithic function:
 
 | Suffix | Registry kind | Runs where | Role |
-|--------|---------------|------------|------|
+| -------- | --------------- | ------------ | ------ |
 | `*_full_payload` | `producer_full_payload` | Worker (producer-side) | `async_chunk=false`; accumulates tensors and ships via connector |
 | `*_async_chunk` | `producer_async_chunk` | Scheduler (producer-side) | `async_chunk=true`; emits per-chunk payloads |
 | `*_token_only` | `placeholder_prompt_builder` | Orchestrator (consumer-side) | Allocates downstream prompt slots only (both modes) |
@@ -509,7 +509,7 @@ Orchestrator-facing builders are normalized to the C1 contract
 `wrap_orchestrator_processor`. The legacy `*_token_only` shell keeps its
 positional signature for call-site compatibility; the actual C1 entry point is
 the `build_forward_placeholder` / `build_prewarm_placeholder` pair attached to
-the shell (RFC #4872 P8b dual-entry design):
+the shell (the dual-entry design):
 
 ```python
 # qwen3_omni.py (Thinker → Talker)
@@ -529,7 +529,7 @@ def thinker2talker_token_only(
     ...
 
 
-# Attached C1 dual-entry builders (RFC #4872 P8b):
+# Attached C1 dual-entry builders:
 #   thinker2talker_token_only.build_forward_placeholder(source_outputs, ctx)
 #   thinker2talker_token_only.build_prewarm_placeholder(*, stage0_prompt, ctx, ...)
 
