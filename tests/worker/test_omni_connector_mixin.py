@@ -545,6 +545,12 @@ class TestFinishedLoadReqsDrain(unittest.TestCase):
         host.shutdown_omni_connectors()
 
 
+def pack(transfer_manager, multimodal_output, request, is_finished=False):
+    """Arbitrarily named, structurally compatible connector payload builder."""
+    del transfer_manager, multimodal_output, request, is_finished
+    return None
+
+
 class TestLoadCustomFuncSelection(unittest.TestCase):
     def test_uses_validator_override_from_public_mixin(self):
         config = SimpleNamespace(
@@ -577,6 +583,50 @@ class TestLoadCustomFuncSelection(unittest.TestCase):
             )
             assert selected_path != func_path
             assert func is None or MixinHost._is_connector_payload_builder(func)
+
+    def test_accepts_full_payload_pooling_output_hook(self):
+        """A ``pooling_output`` full-payload hook loads through the payload contract."""
+        selected_path, func = MixinHost._load_custom_func(
+            SimpleNamespace(
+                async_chunk=False,
+                custom_process_input_func=None,
+                custom_process_next_stage_input_func=(
+                    "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_full_payload"
+                ),
+            )
+        )
+        assert selected_path is not None
+        assert MixinHost._is_connector_payload_builder(func)
+        assert MixinHost._connector_payload_kwarg(func) == "pooling_output"
+
+    def test_accepts_async_chunk_multimodal_output_hook(self):
+        """An async-chunk ``multimodal_output`` hook loads through the payload contract."""
+        selected_path, func = MixinHost._load_custom_func(
+            SimpleNamespace(
+                async_chunk=True,
+                custom_process_input_func=None,
+                custom_process_next_stage_input_func=(
+                    "vllm_omni.model_executor.stage_input_processors.qwen3_omni.thinker2talker_async_chunk"
+                ),
+            )
+        )
+        assert selected_path is not None
+        assert MixinHost._is_connector_payload_builder(func)
+        assert MixinHost._connector_payload_kwarg(func) == "multimodal_output"
+
+    def test_accepts_explicitly_configured_hook_with_arbitrary_name(self):
+        """An explicitly configured, structurally compatible hook is not rejected by name."""
+        module_path = f"{__name__}"
+        selected_path, func = MixinHost._load_custom_func(
+            SimpleNamespace(
+                async_chunk=True,
+                custom_process_input_func=None,
+                custom_process_next_stage_input_func=f"{module_path}.pack",
+            )
+        )
+        assert selected_path == f"{module_path}.pack"
+        assert func is pack
+        assert MixinHost._is_connector_payload_builder(func)
 
 
 class TestFullPayloadSendWithCustomFunc(unittest.TestCase):
