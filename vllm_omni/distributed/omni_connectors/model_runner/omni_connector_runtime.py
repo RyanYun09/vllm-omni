@@ -613,6 +613,14 @@ class _OmniConnectorRuntimeMixin:
         ``custom_process_input_func`` (for example ``thinker2talker``), while the
         connector payload builder lives beside it as ``thinker2talker_full_payload``.
         In that case, derive the full_payload_mode builder path automatically.
+
+        The loader accepts both supported payload contracts: full-payload
+        builders name their runner payload ``pooling_output`` while async-chunk
+        builders name it ``multimodal_output`` (see
+        :meth:`_connector_payload_kwarg`).  The acceptance gate is the mixin's
+        structural validator, not the registry's name-driven kind inference, so
+        an explicitly configured, structurally compatible hook is never
+        rejected solely because of its name.
         """
         candidates: list[str] = []
 
@@ -640,11 +648,18 @@ class _OmniConnectorRuntimeMixin:
                 continue
             tried.add(func_path)
             try:
-                # Resolve through the registry with the full-payload producer
-                # contract.  is_finished is optional here (missing only warns);
-                # a structurally incompatible candidate is skipped so the
-                # fallback chain keeps working.
-                spec = resolve_processor(func_path, expected_kind="producer_full_payload")
+                # Resolve + run the registry's structural validation.  No
+                # expected_kind is passed: a caller-configured hook may carry
+                # any name, and the payload-contract check below is the
+                # authoritative acceptance gate.
+                spec = resolve_processor(func_path)
+                if not cls._is_connector_payload_builder(spec.fn):
+                    logger.debug(
+                        "Skipping incompatible connector payload hook %s; signature=%s",
+                        func_path,
+                        inspect.signature(spec.fn),
+                    )
+                    continue
                 return spec.path, spec.fn
             except ProcessorValidationError as exc:
                 logger.debug(

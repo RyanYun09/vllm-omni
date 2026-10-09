@@ -277,12 +277,28 @@ def _extract_last_frame_fn(module: str) -> Any:
             False,
         ),  # no valid key -> frame.any() False
         ("fish_speech", {"audio_codes": torch.tensor([1, 2, 3])}, [1, 2, 3], False),
+        # 1-D semantics: flat frames bypass the validity/zero gate (amy-why-3459 review).
+        ("fish_speech", {"audio_codes": torch.zeros(8, dtype=torch.long)}, [0] * 8, False),
+        (
+            "fish_speech",
+            {"audio_codes": torch.zeros(8, dtype=torch.long), "audio_code_valid": torch.tensor([False])},
+            [0] * 8,
+            False,
+        ),
+        (
+            "fish_speech",
+            {"audio_codes": torch.zeros(8, dtype=torch.long), "audio_code_valid": False},
+            [0] * 8,
+            False,
+        ),
         ("fish_speech", {"audio_codes": torch.zeros(2, 2, 2)}, None, True),
         ("fish_speech", {}, None, False),
         # qwen3_tts: codes.audio; frame.any() gate; long (no cpu).
         ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
         ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [0, 0]])), None, False),
         ("qwen3_tts", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
+        # 1-D semantics: flat frames bypass the zero gate (legacy qwen3_tts behavior).
+        ("qwen3_tts", _codes_audio(torch.zeros(8, dtype=torch.long)), [0] * 8, False),
         ("qwen3_tts", _codes_audio(torch.zeros(2, 2, 2)), None, True),
         ("qwen3_tts", {"codes": {}}, None, False),
         # voxtral_tts: validated via _common.extract_last_codec_frame(to_long=False).

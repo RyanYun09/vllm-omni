@@ -306,13 +306,15 @@ def extract_last_codec_frame(
       vs ``("audio_codes",)`` (fish_speech top-level).
     - ``validate``:
       - ``None``: only empty checks (higgs_v2 / voxtral);
-      - ``"any"``: drop a frame whose values are all zero (qwen3_tts);
+      - ``"any"``: drop a 2-D frame whose values are all zero (qwen3_tts);
       - ``"valid_mask"``: consult ``audio_code_valid`` then fall back to
-        ``any`` (fish_speech).
+        ``any`` for 2-D frames (fish_speech).
     - ``to_cpu`` / ``to_long``: fish_speech moves to CPU and casts to long;
       higgs_v2 / qwen3_tts cast to long without moving to CPU; voxtral does
       neither (plain ``flatten``).
 
+    Legacy semantics: the validity/zero gate applies only to 2-D input; a
+    flat 1-D codec frame is returned directly (Fish Speech / Qwen3-TTS).
     The returned tensor is always 1-D.
     """
     if not isinstance(payload, dict):
@@ -330,25 +332,27 @@ def extract_last_codec_frame(
         return None
     if audio_codes.ndim == 2:
         frame: torch.Tensor = audio_codes[-1]
+        if frame.numel() == 0:
+            return None
+        if validate in ("any", "valid_mask"):
+            if validate == "valid_mask":
+                valid = payload.get("audio_code_valid")
+                if isinstance(valid, torch.Tensor) and valid.numel() > 0:
+                    is_valid = bool(valid.reshape(-1)[-1].item())
+                elif valid is not None:
+                    is_valid = bool(valid)
+                else:
+                    is_valid = bool(frame.any().item())
+            else:
+                is_valid = bool(frame.any().item())
+            if not is_valid:
+                return None
     elif audio_codes.ndim == 1:
+        # Legacy semantics: a flat (1-D) codec frame is returned directly
+        # without the validity/zero gate (Fish Speech / Qwen3-TTS).
         frame = audio_codes
     else:
         raise ValueError(f"unexpected audio_codes shape: {tuple(audio_codes.shape)}")
-    if frame.numel() == 0:
-        return None
-    if validate in ("any", "valid_mask"):
-        if validate == "valid_mask":
-            valid = payload.get("audio_code_valid")
-            if isinstance(valid, torch.Tensor) and valid.numel() > 0:
-                is_valid = bool(valid.reshape(-1)[-1].item())
-            elif valid is not None:
-                is_valid = bool(valid)
-            else:
-                is_valid = bool(frame.any().item())
-        else:
-            is_valid = bool(frame.any().item())
-        if not is_valid:
-            return None
     frame = frame.flatten()
     if to_cpu:
         frame = frame.detach().cpu()
