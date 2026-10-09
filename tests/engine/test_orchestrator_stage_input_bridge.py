@@ -383,7 +383,7 @@ async def test_streaming_segment_does_not_complete_final_output_stage() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P2 deep-dive: dead-processor hint must not flag the selected sync hook.
+# Dead-processor hint must not flag the selected sync hook.
 # ---------------------------------------------------------------------------
 
 
@@ -449,7 +449,7 @@ def test_warn_dead_input_processors_flags_distinct_sync_hook() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P3 deep-dive: prewarm placeholder builder resolution is cached per stage.
+# Prewarm placeholder builder resolution is cached per stage.
 # ---------------------------------------------------------------------------
 
 
