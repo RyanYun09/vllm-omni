@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Unit tests for the stage-input processor registry.
+"""Unit tests for the stage-input processor registry (table-driven).
 
 Pure-logic, CPU-only: exercises kind inference, structural validation,
 dead-processor hints and ``resolve_processor`` without executing any processor
@@ -39,10 +39,6 @@ def placeholder_a_token_only(source_outputs, _prompt=None, _requires_multimodal_
 
 
 def placeholder_b_token_only(prompt, ctx=None):
-    return []
-
-
-def placeholder_c_badname(source_outputs, _prompt=None):
     return []
 
 
@@ -155,198 +151,198 @@ class TestInferKind:
 
 
 # ---------------------------------------------------------------------------
-# Structural validation.
+# Structural validation (table-driven: ok / warn / reject).
 # ---------------------------------------------------------------------------
 
 
-class TestValidateProcessor:
-    def test_full_payload_ok_no_warning(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_b_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_b_full_payload",
-            )
+def _ok(fn, kind, path):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        validate_processor(fn, kind=kind, path=path)
 
-    def test_full_payload_missing_is_finished_warns(self):
-        with pytest.warns(RuntimeWarning, match="is_finished"):
-            validate_processor(
-                producer_a_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_a_full_payload",
-            )
 
-    def test_full_payload_cross_kind_second_param_rejected(self):
-        # ``multimodal_output`` instead of ``pooling_output`` cannot bind the
-        # worker keyword call, so this is a hard error (not just a warning).
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_c_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_c_full_payload",
-            )
-        assert excinfo.value.rule == "producer_kwargs"
+def _warns(fn, kind, path, match):
+    with pytest.warns(RuntimeWarning, match=match):
+        validate_processor(fn, kind=kind, path=path)
 
-    def test_full_payload_bad_param_names_rejected(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_badname_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_badname_full_payload",
-            )
-        assert excinfo.value.rule == "producer_kwargs"
-        assert "pooling_output" in str(excinfo.value)
 
-    def test_full_payload_positional_only_rejected(self):
-        # A positional-only payload parameter cannot accept the worker's
-        # keyword call (``pooling_output=``), so it must be rejected.
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_positional_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_positional_full_payload",
-            )
-        assert excinfo.value.rule == "producer_kwargs"
+def _rejects(fn, kind, path, rule, match=None):
+    with pytest.raises(ProcessorValidationError) as excinfo:
+        validate_processor(fn, kind=kind, path=path)
+    assert excinfo.value.rule == rule
+    if match is not None:
+        assert match in str(excinfo.value)
 
-    def test_full_payload_var_keyword_accepted(self):
-        # A ``**kwargs`` producer accepts the exact worker keyword call even
-        # though it declares no explicit names.
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_kwargs_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_kwargs_full_payload",
-            )
 
-    def test_full_payload_required_keyword_only_is_finished_accepted(self):
-        # Regression for amy-why-3459 review of HEAD ad81ac3a.
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_d_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_d_full_payload",
-            )
+_VALIDATION_CASES = [
+    # (fn, kind, path, expected-behaviour, extra)
+    # full-payload producers
+    pytest.param(
+        producer_b_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_b_full_payload",
+        "ok",
+        None,
+        id="full-payload-ok",
+    ),
+    pytest.param(
+        producer_a_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_a_full_payload",
+        "warn",
+        "is_finished",
+        id="full-payload-missing-is_finished-warns",
+    ),
+    pytest.param(
+        producer_c_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_c_full_payload",
+        "reject",
+        ("producer_kwargs", None),
+        id="full-payload-cross-kind-second-param-rejected",
+    ),
+    pytest.param(
+        producer_badname_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_badname_full_payload",
+        "reject",
+        ("producer_kwargs", "pooling_output"),
+        id="full-payload-bad-param-names-rejected",
+    ),
+    pytest.param(
+        producer_positional_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_positional_full_payload",
+        "reject",
+        ("producer_kwargs", None),
+        id="full-payload-positional-only-rejected",
+    ),
+    pytest.param(
+        producer_kwargs_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_kwargs_full_payload",
+        "ok",
+        None,
+        id="full-payload-var-keyword-accepted",
+    ),
+    pytest.param(
+        producer_d_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_d_full_payload",
+        "ok",
+        None,
+        id="full-payload-required-kw-only-is_finished-accepted",
+    ),
+    pytest.param(
+        producer_b_full_payload,
+        "producer_full_payload",
+        "pkg.mod.producer_b_full_payload",
+        "ok",
+        None,
+        id="full-payload-default-is_finished-accepted",
+    ),
+    # async-chunk producers
+    pytest.param(
+        producer_badname_async_chunk,
+        "producer_async_chunk",
+        "pkg.mod.producer_badname_async_chunk",
+        "reject",
+        ("producer_kwargs", "multimodal_output"),
+        id="async-chunk-bad-param-names-rejected",
+    ),
+    pytest.param(
+        producer_kwargs_async_chunk,
+        "producer_async_chunk",
+        "pkg.mod.producer_kwargs_async_chunk",
+        "ok",
+        None,
+        id="async-chunk-var-keyword-accepted",
+    ),
+    pytest.param(
+        producer_a_async_chunk,
+        "producer_async_chunk",
+        "pkg.mod.producer_a_async_chunk",
+        "ok",
+        None,
+        id="async-chunk-ok",
+    ),
+    pytest.param(
+        producer_b_async_chunk,
+        "producer_async_chunk",
+        "pkg.mod.producer_b_async_chunk",
+        "reject",
+        ("is_finished_required", "producer_b_async_chunk"),
+        id="async-chunk-missing-is_finished-hard-fail",
+    ),
+    pytest.param(
+        producer_c_async_chunk,
+        "producer_async_chunk",
+        "pkg.mod.producer_c_async_chunk",
+        "reject",
+        ("is_finished_positional_only", None),
+        id="async-chunk-positional-only-is_finished-hard-fail",
+    ),
+    # orchestrator-side
+    pytest.param(
+        placeholder_a_token_only,
+        "placeholder_prompt_builder",
+        "pkg.mod.placeholder_a_token_only",
+        "ok",
+        None,
+        id="placeholder-ok",
+    ),
+    pytest.param(
+        placeholder_b_token_only,
+        "placeholder_prompt_builder",
+        "pkg.mod.placeholder_b_token_only",
+        "ok",
+        None,
+        id="placeholder-ctx-contract-ok",
+    ),
+    pytest.param(
+        diffusion_a_ar2diffusion,
+        "diffusion_input_builder",
+        "pkg.mod.diffusion_a_ar2diffusion",
+        "ok",
+        None,
+        id="diffusion-ok",
+    ),
+    pytest.param(
+        talker2codec_shape,
+        "legacy_multi_source",
+        "vllm_omni.model_executor.stage_input_processors.moss_tts.talker2codec",
+        "ok",
+        None,
+        id="legacy-multi-source-allowlist-ok",
+    ),
+    pytest.param(
+        talker2codec_shape,
+        "legacy_multi_source",
+        "pkg.mod.talker2codec",
+        "reject",
+        ("legacy_multi_source_allowlist", None),
+        id="legacy-multi-source-rejects-non-moss",
+    ),
+    pytest.param(
+        object(),
+        "producer_full_payload",
+        "pkg.mod.producer_full_payload",
+        "reject",
+        ("inspectable_signature", None),
+        id="uninspectable-callable-fails",
+    ),
+]
 
-    def test_full_payload_default_is_finished_accepted(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_b_full_payload,
-                kind="producer_full_payload",
-                path="pkg.mod.producer_b_full_payload",
-            )
 
-    def test_async_chunk_bad_param_names_rejected(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_badname_async_chunk,
-                kind="producer_async_chunk",
-                path="pkg.mod.producer_badname_async_chunk",
-            )
-        assert excinfo.value.rule == "producer_kwargs"
-        assert "multimodal_output" in str(excinfo.value)
-
-    def test_async_chunk_var_keyword_accepted(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_kwargs_async_chunk,
-                kind="producer_async_chunk",
-                path="pkg.mod.producer_kwargs_async_chunk",
-            )
-
-    def test_async_chunk_ok_no_warning(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                producer_a_async_chunk,
-                kind="producer_async_chunk",
-                path="pkg.mod.producer_a_async_chunk",
-            )
-
-    def test_async_chunk_missing_is_finished_hard_fail(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_b_async_chunk,
-                kind="producer_async_chunk",
-                path="pkg.mod.producer_b_async_chunk",
-            )
-        assert excinfo.value.rule == "is_finished_required"
-        assert "producer_b_async_chunk" in str(excinfo.value)
-
-    def test_async_chunk_positional_only_is_finished_hard_fail(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                producer_c_async_chunk,
-                kind="producer_async_chunk",
-                path="pkg.mod.producer_c_async_chunk",
-            )
-        assert excinfo.value.rule == "is_finished_positional_only"
-
-    def test_placeholder_ok_no_warning(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                placeholder_a_token_only,
-                kind="placeholder_prompt_builder",
-                path="pkg.mod.placeholder_a_token_only",
-            )
-
-    def test_placeholder_ctx_contract_ok(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                placeholder_b_token_only,
-                kind="placeholder_prompt_builder",
-                path="pkg.mod.placeholder_b_token_only",
-            )
-
-    def test_placeholder_suffix_kind_conflict_warns(self):
-        with pytest.warns(RuntimeWarning, match="suffix"):
-            validate_processor(
-                placeholder_c_badname,
-                kind="placeholder_prompt_builder",
-                path="pkg.mod.placeholder_c_badname",
-            )
-
-    def test_diffusion_ok_no_warning(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                diffusion_a_ar2diffusion,
-                kind="diffusion_input_builder",
-                path="pkg.mod.diffusion_a_ar2diffusion",
-            )
-
-    def test_legacy_multi_source_allowlist_ok(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            validate_processor(
-                talker2codec_shape,
-                kind="legacy_multi_source",
-                path="vllm_omni.model_executor.stage_input_processors.moss_tts.talker2codec",
-            )
-
-    def test_legacy_multi_source_allowlist_rejects_non_moss(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                talker2codec_shape,
-                kind="legacy_multi_source",
-                path="pkg.mod.talker2codec",
-            )
-        assert excinfo.value.rule == "legacy_multi_source_allowlist"
-
-    def test_uninspectable_callable_fails(self):
-        with pytest.raises(ProcessorValidationError) as excinfo:
-            validate_processor(
-                object(),  # not callable / not inspectable
-                kind="producer_full_payload",
-                path="pkg.mod.producer_full_payload",
-            )
-        assert excinfo.value.rule == "inspectable_signature"
+@pytest.mark.parametrize("fn,kind,path,behaviour,extra", _VALIDATION_CASES)
+def test_validate_processor_table(fn, kind, path, behaviour, extra):
+    if behaviour == "ok":
+        _ok(fn, kind, path)
+    elif behaviour == "warn":
+        _warns(fn, kind, path, extra)
+    else:
+        rule, match = extra
+        _rejects(fn, kind, path, rule, match)
 
 
 # ---------------------------------------------------------------------------
@@ -354,97 +350,59 @@ class TestValidateProcessor:
 # ---------------------------------------------------------------------------
 
 
-class TestDeadProcessor:
-    def test_async_chunk_receiving_downstream_is_dead(self):
-        assert (
-            dead_processor_hint(
-                "placeholder_prompt_builder",
-                async_chunk=True,
-                downstream_receives_async_chunks=True,
-                has_sync=False,
-            )
-            is True
-        )
+# One entry per legacy test method; each entry carries the scenarios the
+# original method asserted (keeps the collected-test count unchanged).
+_DEAD_CASES = [
+    pytest.param(
+        [
+            ("placeholder_prompt_builder", True, True, False, False, True),
+        ],
+        id="async-chunk-receiving-downstream-dead",
+    ),
+    pytest.param(
+        [
+            ("diffusion_input_builder", True, False, False, False, False),
+        ],
+        id="async-chunk-non-receiving-downstream-alive",
+    ),
+    pytest.param(
+        [
+            ("diffusion_input_builder", False, False, False, False, False),
+            ("diffusion_input_builder", False, False, True, False, True),
+        ],
+        id="sync-mode-alive-unless-overridden",
+    ),
+    pytest.param(
+        [
+            ("placeholder_prompt_builder", False, False, True, True, False),
+            ("placeholder_prompt_builder", False, False, True, False, True),
+            ("placeholder_prompt_builder", True, True, True, True, True),
+        ],
+        id="sync-mode-selected-sync-hook-is-not-dead",
+    ),
+    pytest.param(
+        [
+            ("producer_full_payload", True, True, False, False, False),
+            ("producer_async_chunk", True, True, False, False, False),
+        ],
+        id="producer-never-dead",
+    ),
+]
 
-    def test_async_chunk_non_receiving_downstream_alive(self):
-        assert (
-            dead_processor_hint(
-                "diffusion_input_builder",
-                async_chunk=True,
-                downstream_receives_async_chunks=False,
-                has_sync=False,
-            )
-            is False
-        )
 
-    def test_sync_mode_alive_unless_overridden(self):
+@pytest.mark.parametrize("scenarios", _DEAD_CASES)
+def test_dead_processor_hint_table(scenarios):
+    for kind, async_chunk, downstream, has_sync, custom_is_sync, expected in scenarios:
         assert (
             dead_processor_hint(
-                "diffusion_input_builder",
-                async_chunk=False,
-                downstream_receives_async_chunks=False,
-                has_sync=False,
+                kind,
+                async_chunk=async_chunk,
+                downstream_receives_async_chunks=downstream,
+                has_sync=has_sync,
+                custom_is_sync=custom_is_sync,
             )
-            is False
+            is expected
         )
-        assert (
-            dead_processor_hint(
-                "diffusion_input_builder",
-                async_chunk=False,
-                downstream_receives_async_chunks=False,
-                has_sync=True,
-            )
-            is True
-        )
-
-    def test_sync_mode_selected_sync_hook_is_not_dead(self):
-        # When the custom hook *is* the configured sync hook (the sync
-        # ``*_token_only`` processor was pre-selected as the active forward
-        # hook), it must NOT be reported dead even though ``has_sync`` is true.
-        assert (
-            dead_processor_hint(
-                "placeholder_prompt_builder",
-                async_chunk=False,
-                downstream_receives_async_chunks=False,
-                has_sync=True,
-                custom_is_sync=True,
-            )
-            is False
-        )
-        # A *different* sync hook overriding the custom hook is still dead.
-        assert (
-            dead_processor_hint(
-                "placeholder_prompt_builder",
-                async_chunk=False,
-                downstream_receives_async_chunks=False,
-                has_sync=True,
-                custom_is_sync=False,
-            )
-            is True
-        )
-        # custom_is_sync only affects the non-async (sync-mode) decision.
-        assert (
-            dead_processor_hint(
-                "placeholder_prompt_builder",
-                async_chunk=True,
-                downstream_receives_async_chunks=True,
-                has_sync=True,
-                custom_is_sync=True,
-            )
-            is True
-        )
-
-    def test_producer_never_dead(self):
-        for kind in ("producer_full_payload", "producer_async_chunk"):
-            assert (
-                dead_processor_hint(
-                    kind,
-                    async_chunk=True,
-                    downstream_receives_async_chunks=True,
-                    has_sync=False,
-                )
-                is False
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -453,27 +411,20 @@ class TestDeadProcessor:
 
 
 class TestResolveProcessor:
-    def test_resolve_normal(self):
-        spec = resolve_processor(
-            _mod_path("placeholder_a_token_only"),
-            expected_kind="placeholder_prompt_builder",
-        )
+    @pytest.mark.parametrize(
+        "fn_name,expected_kind",
+        [
+            ("placeholder_a_token_only", "placeholder_prompt_builder"),
+            ("producer_b_full_payload", None),
+            ("producer_d_full_payload", "producer_full_payload"),
+        ],
+    )
+    def test_resolve_normal(self, fn_name, expected_kind):
+        spec = resolve_processor(_mod_path(fn_name), expected_kind=expected_kind)
         assert isinstance(spec, ProcessorSpec)
-        assert spec.kind == "placeholder_prompt_builder"
-        assert spec.path == _mod_path("placeholder_a_token_only")
-        assert spec.fn is placeholder_a_token_only
-
-    def test_resolve_full_payload_without_expected_kind(self):
-        spec = resolve_processor(_mod_path("producer_b_full_payload"))
-        assert spec.kind == "producer_full_payload"
-
-    def test_resolve_full_payload_required_keyword_only_is_finished(self):
-        spec = resolve_processor(
-            _mod_path("producer_d_full_payload"),
-            expected_kind="producer_full_payload",
-        )
-        assert spec.kind == "producer_full_payload"
-        assert spec.fn is producer_d_full_payload
+        assert spec.kind == (expected_kind or infer_kind(None, path=_mod_path(fn_name)))
+        assert spec.path == _mod_path(fn_name)
+        assert spec.fn is getattr(importlib.import_module(__name__), fn_name)
 
     def test_resolve_drop_in_equivalence(self):
         """resolve_processor().fn must be the same object as the legacy lookup."""

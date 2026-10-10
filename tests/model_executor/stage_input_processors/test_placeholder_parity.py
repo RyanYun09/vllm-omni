@@ -102,21 +102,29 @@ def _capture_pack(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_build_forward_placeholder_length_matches_golden(monkeypatch):
+@pytest.mark.parametrize(
+    "source,ctx_prompt,expected_len,expected_voice",
+    [
+        # Golden chat-template scan: sum(user segment) + 9 == 15.
+        pytest.param(_source_outputs(GOLDEN_PROMPT), None, 15, None, id="golden-length"),
+        pytest.param(
+            _source_outputs([1, 2], [3]),
+            {"additional_information": {"speaker": ["ethan"], "language": ["English"]}},
+            None,
+            {"speaker": ["ethan"], "language": ["English"]},
+            id="voice-metadata",
+        ),
+    ],
+)
+def test_build_forward_placeholder(monkeypatch, source, ctx_prompt, expected_len, expected_voice):
     recorded = _capture_pack(monkeypatch)
-    out = q3.build_forward_placeholder(_source_outputs(GOLDEN_PROMPT), _ctx())
+    out = q3.build_forward_placeholder(source, _ctx(prompt=ctx_prompt))
     assert len(out) == 1
     assert out[0] == "PLACEHOLDER"
-    # Golden chat-template scan: sum(user segment) + 9 == 15.
-    assert recorded["prompt_len"] == 15
-
-
-def test_build_forward_placeholder_preserves_voice_metadata(monkeypatch):
-    recorded = _capture_pack(monkeypatch)
-    prompt = {"additional_information": {"speaker": ["ethan"], "language": ["English"]}}
-    out = q3.build_forward_placeholder(_source_outputs([1, 2], [3]), _ctx(prompt=prompt))
-    assert len(out) == 1
-    assert recorded["voice_metadata"] == {"speaker": ["ethan"], "language": ["English"]}
+    if expected_len is not None:
+        assert recorded["prompt_len"] == expected_len
+    if expected_voice is not None:
+        assert recorded["voice_metadata"] == expected_voice
 
 
 # ---------------------------------------------------------------------------
@@ -124,27 +132,23 @@ def test_build_forward_placeholder_preserves_voice_metadata(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_build_prewarm_placeholder_length_from_stage0(monkeypatch):
+@pytest.mark.parametrize(
+    "stage0_prompt,expected_len",
+    [
+        pytest.param(GOLDEN_PROMPT, 15, id="list-stage0"),
+        pytest.param(SimpleNamespace(prompt_token_ids=GOLDEN_PROMPT), 15, id="request-like-stage0"),
+    ],
+)
+def test_build_prewarm_placeholder(monkeypatch, stage0_prompt, expected_len):
     recorded = _capture_pack(monkeypatch)
-    out = q3.build_prewarm_placeholder(
-        stage0_prompt=GOLDEN_PROMPT,
-        ctx=_ctx(),
-        downstream_stage_id=1,
-    )
+    out = q3.build_prewarm_placeholder(stage0_prompt=stage0_prompt, ctx=_ctx(), downstream_stage_id=1)
     assert len(out) == 1
     assert out[0] == "PLACEHOLDER"
     # stage0_only runs the chat-template scan on the stage-0 list -> 15
     # (the same number the forward builder and the adapter scan produce).
-    assert recorded["prompt_len"] == 15
+    assert recorded["prompt_len"] == expected_len
     # Voice metadata is intentionally not forwarded (matches pre-existing prewarm).
     assert recorded["voice_metadata"] is None
-
-
-def test_build_prewarm_placeholder_accepts_request_like_stage0(monkeypatch):
-    recorded = _capture_pack(monkeypatch)
-    stage0_request = SimpleNamespace(prompt_token_ids=GOLDEN_PROMPT)
-    q3.build_prewarm_placeholder(stage0_prompt=stage0_request, ctx=_ctx(), downstream_stage_id=1)
-    assert recorded["prompt_len"] == 15
 
 
 # ---------------------------------------------------------------------------
@@ -152,34 +156,24 @@ def test_build_prewarm_placeholder_accepts_request_like_stage0(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_forward_prewarm_parity_single_user_segment(monkeypatch):
-    """Single user segment: forward (full) == prewarm (stage0_only) == 6."""
+@pytest.mark.parametrize(
+    "prompt,expected_len",
+    [
+        # Single user segment: forward (full) == prewarm (stage0_only) == 6.
+        pytest.param(SINGLE_USER_PROMPT, 6, id="single-user-segment"),
+        # Golden chat-template prompt: full == stage0_only scan == 15.  The old
+        # ``len(stage0_prompt)`` == 10 estimate under-reserved KV slots and split
+        # a request between 10 and 15 depending on resolution success.
+        pytest.param(GOLDEN_PROMPT, 15, id="golden"),
+    ],
+)
+def test_forward_prewarm_parity(monkeypatch, prompt, expected_len):
     recorded = _capture_pack(monkeypatch)
-    q3.build_forward_placeholder(_source_outputs(SINGLE_USER_PROMPT), _ctx())
+    q3.build_forward_placeholder(_source_outputs(prompt), _ctx())
     forward_len = recorded["prompt_len"]
     recorded.clear()
-    q3.build_prewarm_placeholder(stage0_prompt=SINGLE_USER_PROMPT, ctx=_ctx(), downstream_stage_id=1)
-    assert forward_len == recorded["prompt_len"] == 6
-
-
-def test_forward_prewarm_golden_relationship(monkeypatch):
-    """Documented relationship for the chat-template golden prompt.
-
-    forward (full) == 15 (golden-locked); prewarm (stage0_only) is now the
-    **same chat-template scan** on the stage-0 list, so it also returns 15.
-    The builder and the inline fallback
-    (``adapter.compute_talker_prompt_ids_length``) therefore agree — the old
-    ``len(stage0_prompt)`` == 10 estimate under-reserved KV slots and split a
-    single request between 10 and 15 depending on whether resolution succeeded.
-    """
-    recorded = _capture_pack(monkeypatch)
-    q3.build_forward_placeholder(_source_outputs(GOLDEN_PROMPT), _ctx())
-    forward_len = recorded["prompt_len"]
-    recorded.clear()
-    q3.build_prewarm_placeholder(stage0_prompt=GOLDEN_PROMPT, ctx=_ctx(), downstream_stage_id=1)
-    assert forward_len == 15
-    assert recorded["prompt_len"] == 15
-    assert forward_len == recorded["prompt_len"]  # full == stage0_only scan
+    q3.build_prewarm_placeholder(stage0_prompt=prompt, ctx=_ctx(), downstream_stage_id=1)
+    assert forward_len == recorded["prompt_len"] == expected_len
 
 
 # ---------------------------------------------------------------------------

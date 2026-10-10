@@ -633,18 +633,12 @@ def build_forward_placeholder(
     source_outputs: list[Any],
     ctx: OrchestratorInputContext,
 ) -> list[OmniTokensPrompt]:
-    """Orchestrator-side sync forward placeholder builder.
+    """Sync forward placeholder: one KV-sized ``OmniTokensPrompt`` per output.
 
-    Semantics match the legacy ``thinker2talker_token_only`` forward path: one
-    placeholder ``OmniTokensPrompt`` per upstream output, sized so the
-    scheduler can reserve KV-cache slots, with speaker / language copied from
-    the original prompt so they survive when Stage-0 request metadata is
-    unavailable to the connector payload.
-
-    The length computation is delegated to
-    ``_common.compute_placeholder_prompt_len(mode="full")`` (the Qwen
-    chat-template scan, golden-locked at 15 for the golden prompt) and the
-    placeholder packing to ``_common.pack_placeholder_prompt``.
+    Mirrors the legacy ``thinker2talker_token_only`` path; speaker/language are
+    copied from the prompt so they survive without Stage-0 request metadata.
+    Length/packing delegated to ``_common.compute_placeholder_prompt_len(mode="full")``
+    and ``_common.pack_placeholder_prompt``.
     """
     talker_inputs: list[OmniTokensPrompt] = []
     streaming_context = ctx.streaming_context
@@ -693,23 +687,14 @@ def build_prewarm_placeholder(
     ctx: OrchestratorInputContext,
     downstream_stage_id: int,
 ) -> list[OmniTokensPrompt]:
-    """Best-effort async-chunk prewarm placeholder builder.
+    """Best-effort async-chunk prewarm estimate (no ``source_outputs`` yet).
 
-    async-chunk mode has **no upstream ``source_outputs``** yet at prewarm
-    time, so this is a best-effort estimate: the placeholder length comes from
-    ``_common.compute_placeholder_prompt_len(mode="stage0_only")``, which runs
-    the **Qwen chat-template scan on the stage-0 input list** (the same scan
-    ``adapter.compute_talker_prompt_ids_length`` runs).  This keeps the prewarm
-    estimate consistent with the sync forward placeholder and the inline
-    fallback (golden prompt: 15 == 15; single user segment: 6 == 6).  The
-    connector fixup path
-    (``adapter.construct_next_stage_streaming_input_prompt``) replaces this
-    estimate with the real length once the upstream chunk arrives.
-
-    ``ctx`` / ``downstream_stage_id`` are accepted for contract uniformity;
-    voice metadata is intentionally **not** forwarded here (matching the
-    pre-existing prewarm behaviour — no new behaviour is introduced).  Per-edge
-    refinement (``downstream_stage_id``) is out of scope.
+    Length from ``_common.compute_placeholder_prompt_len(mode="stage0_only")``
+    (the same Qwen scan ``adapter.compute_talker_prompt_ids_length`` runs), so
+    prewarm matches sync-forward and the inline fallback; the connector fixup
+    path replaces it once the upstream chunk arrives.  Voice metadata is not
+    forwarded (matching pre-existing prewarm behaviour); per-edge refinement
+    is out of scope.
     """
     del ctx, downstream_stage_id  # Only the stage-0 input estimate is used.
     if hasattr(stage0_prompt, "prompt_token_ids"):
@@ -730,18 +715,10 @@ def thinker2talker_token_only(
     requires_multimodal_data: bool = False,
     streaming_context: Any | None = None,
 ) -> list[OmniTokensPrompt]:
-    """Orchestrator-side placeholder builder for Stage-1 (Talker) when
-    ``async_chunk=False``.
+    """Stage-1 sync placeholder (``async_chunk=False``): KV-sized slot only.
 
-    After the communication-layer refactor, this function only allocates a
-    placeholder ``prompt_token_ids`` of the correct length so the scheduler can
-    reserve KV-cache slots. It does **not** forward bulk tensors.
-
-    Thin delegation to :func:`build_forward_placeholder` — the dual-entry design
-    keeps the sync forward path and the async-chunk prewarm path on the same
-    shared ``_common`` length / packing helpers.  ``prompt`` /
-    ``requires_multimodal_data`` / ``streaming_context`` are kept for call-site
-    signature compatibility; they are folded into an ``OrchestratorInputContext``.
+    Thin delegation to :func:`build_forward_placeholder`; legacy params are kept
+    for call-site compatibility and folded into an ``OrchestratorInputContext``.
     """
     ctx = OrchestratorInputContext(
         prompt=prompt,
@@ -751,10 +728,8 @@ def thinker2talker_token_only(
     return build_forward_placeholder(source_outputs, ctx)
 
 
-# The orchestrator resolves ``sync_process_input_func`` (the ``*_token_only``
-# path) via ``resolve_processor(...).fn`` and reads ``build_prewarm_placeholder``
-# off the resolved function object.  Expose both dual-entry builders here so
-# that lookup works without a separate module scan.
+# Expose the dual-entry builders on the resolved ``*_token_only`` fn so the
+# orchestrator's ``sync_process_input_func`` lookup finds them without a scan.
 thinker2talker_token_only.build_forward_placeholder = build_forward_placeholder  # type: ignore[attr-defined]
 thinker2talker_token_only.build_prewarm_placeholder = build_prewarm_placeholder  # type: ignore[attr-defined]
 
@@ -778,9 +753,7 @@ def talker2code2wav_async_chunk(
     request: OmniEngineCoreRequest,
     is_finished: bool = False,
 ) -> OmniPayloadStruct | None:
-    """
-    Multimodal output version.
-    """
+    """Async-chunk producer: multimodal output version."""
     request_id = request.external_req_id
     code_predictor_codes = None
     frame_valid = None

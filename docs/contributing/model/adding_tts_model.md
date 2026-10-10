@@ -553,11 +553,6 @@ def ar2decoder_token_only(
     ...
 ```
 
-`OrchestratorInputContext` carries `prompt`, `requires_multimodal_data`,
-`streaming_context` and `sampling_params` (and deliberately has no
-`model_config` field). Legacy positional shapes are adapted through
-`wrap_orchestrator_processor` with a `DeprecationWarning`.
-
 Names that do not follow the suffix convention can register an explicit kind
 override at module import time:
 
@@ -567,12 +562,10 @@ from vllm_omni.model_executor.stage_input_processors import register_processor
 register_processor(f"{_PROC}.ar2decoder_token_only", "placeholder_prompt_builder")
 ```
 
-At startup the runtime resolves each processor through
-`resolve_processor(path, expected_kind=...)` (import -> `infer_kind` ->
-`validate_processor` -> expected-kind check). Hard contract violations raise
-`ProcessorValidationError`; soft mismatches emit a `RuntimeWarning`. See the
+For the registry validation rules, legacy-shape adaptation, and the full
+contract, see the
 [Stage Input Processor Contract](../../design/feature/async_chunk.md#stage-input-processor-contract)
-section of the async chunk design document for the full contract.
+section of the async chunk design document.
 
 ### Data structures
 

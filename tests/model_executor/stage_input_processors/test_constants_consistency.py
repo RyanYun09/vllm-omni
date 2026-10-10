@@ -46,6 +46,9 @@ QWEN3_CODEC_EXPECTED = (4196, 4197, 4198)  # (pad, bos, eos)
 QWEN2_5_CODEC_END_EXPECTED = 8294
 QWEN3_CODEC_STOP_EXPECTED = 2150
 
+# Processor-side codec ids, single-sourced (pad, bos, eos).
+QWEN3_CODEC_PROCESSOR_TUPLE = (_QWEN3_CODEC_PAD_TOKEN_ID, _QWEN3_CODEC_BOS_TOKEN_ID, _QWEN3_CODEC_EOS_TOKEN_ID)
+
 
 def _pipeline_stop_token_ids(pipeline) -> list[int]:
     """Extract the (unique) ``stop_token_ids`` across a pipeline's stages."""
@@ -60,25 +63,17 @@ def _pipeline_stop_token_ids(pipeline) -> list[int]:
 
 def test_qwen3_codec_token_ids_processor_matches_model():
     """4196/4197/4198: processor and model implementation must agree."""
-    processor = (
-        _QWEN3_CODEC_PAD_TOKEN_ID,
-        _QWEN3_CODEC_BOS_TOKEN_ID,
-        _QWEN3_CODEC_EOS_TOKEN_ID,
-    )
     model = (TALKER_CODEC_PAD_TOKEN_ID, TALKER_CODEC_BOS_TOKEN_ID, QWEN3_MODEL_CODEC_EOS)
-    assert processor == model == QWEN3_CODEC_EXPECTED
+    assert QWEN3_CODEC_PROCESSOR_TUPLE == model == QWEN3_CODEC_EXPECTED
 
 
 def test_qwen3_codec_token_ids_match_hf_config():
     """4196/4197/4198: processor constants must match the in-repo Qwen3-TTS
     HF config defaults (single source of truth)."""
     cfg = Qwen3TTSTalkerConfig()
-    assert (cfg.codec_pad_id, cfg.codec_bos_id, cfg.codec_eos_token_id) == QWEN3_CODEC_EXPECTED
-    assert (
-        _QWEN3_CODEC_PAD_TOKEN_ID,
-        _QWEN3_CODEC_BOS_TOKEN_ID,
-        _QWEN3_CODEC_EOS_TOKEN_ID,
-    ) == (cfg.codec_pad_id, cfg.codec_bos_id, cfg.codec_eos_token_id)
+    hf = (cfg.codec_pad_id, cfg.codec_bos_id, cfg.codec_eos_token_id)
+    assert hf == QWEN3_CODEC_EXPECTED
+    assert QWEN3_CODEC_PROCESSOR_TUPLE == hf
 
 
 def test_qwen3_omni_runtime_talker_config_matches_processor():

@@ -132,7 +132,7 @@ The following diagram illustrates the **Async Chunk Architecture** for multi-sta
 
 ### Execution Timeline
 
-```
+```text
 Timeline: Parallel vs Sequential
 
 Sequential (async_chunk=false):
@@ -348,23 +348,16 @@ def my_token_only(
     ...
 ```
 
-`OrchestratorInputContext` carries the transition metadata and deliberately has
-no `model_config` field (a processor that needs the model config reads it
-through the upstream stage closure, never through this context):
-
-```python
-@dataclass(frozen=True)
-class OrchestratorInputContext:
-    prompt: Any | None = None
-    requires_multimodal_data: bool = False
-    streaming_context: Any | None = None
-    sampling_params: Any | None = None
-```
+`OrchestratorInputContext` (defined in `_dispatch.py`) carries `prompt`,
+`requires_multimodal_data`, `streaming_context`, `sampling_params`, and the
+target-stage config fields `target_model_config` / `next_stage_hf_config`
+(populated by the stage client from the stage's own vllm config); it
+deliberately has no `model_config` field.
 
 Processors that already accept `ctx` are used unchanged. Legacy positional
-shapes (C0 3-arg, C2 placeholder with `streaming_context`, C3 diffusion with
-`sampling_params`, C4 `moss_tts.talker2codec` multi-source) are adapted by
-`wrap_orchestrator_processor` / `invoke_orchestrator_processor` and emit a
+shapes (C0 3-arg, C2 placeholder, C3 diffusion, C4 `moss_tts.talker2codec`
+multi-source) are adapted once by `wrap_orchestrator_processor` /
+`invoke_orchestrator_processor` (see `_dispatch.py`) and emit a
 `DeprecationWarning`.
 
 ### Registry and startup validation
@@ -381,14 +374,12 @@ name-driven (suffix-based):
   suffixes -> `diffusion_input_builder`, no suffix ->
   `legacy_orchestrator_builder`, `moss_tts.talker2codec` ->
   `legacy_multi_source`.
-- `validate_processor(fn, *, kind, path, stage_config=None)` — hard contract
-  violations raise `ProcessorValidationError`; soft mismatches emit a
-  `RuntimeWarning`.
+- `validate_processor(fn, *, kind, path, stage_config=None)` — hard violations
+  raise `ProcessorValidationError`; soft mismatches emit a `RuntimeWarning`.
 - `resolve_processor(path, *, expected_kind=None, stage_config=None)` — the
-  drop-in replacement for the legacy `getattr(importlib.import_module(...), ...)`
-  lookups: imports, infers, validates, optionally checks `expected_kind`, and
-  returns a `ProcessorSpec` whose `fn` is the same callable the legacy lookup
-  produced.
+  drop-in replacement for legacy `getattr(importlib.import_module(...), ...)`
+  lookups: import -> infer -> validate -> optional expected-kind check,
+  returning a `ProcessorSpec` whose `fn` matches the legacy lookup.
 
 ### Dual entry: forward and prewarm placeholders
 
@@ -402,13 +393,14 @@ length / packing helpers:
 - `build_prewarm_placeholder(*, stage0_prompt, ctx, downstream_stage_id)` —
   async-chunk mode has no upstream `source_outputs` yet at prewarm time, so the
   length is a best-effort estimate from the stage-0 input prompt
-  (`mode="stage0_only"`, i.e. `len(stage0_prompt)`). The connector fixup path
-  (`adapter.construct_next_stage_streaming_input_prompt`) replaces the estimate
-  with the real length once the upstream chunk arrives.
+  (`mode="stage0_only"`, matching the legacy
+  `adapter.compute_talker_prompt_ids_length`). The connector fixup path replaces
+  the estimate with the real length once the upstream chunk arrives.
 
-The orchestrator routes prewarm through `_prewarm_async_chunk_stages`, which
-reads `build_prewarm_placeholder` off the resolved `*_token_only` function
-object (both builders are attached as attributes on the exported function).
+The dual-entry builder is resolved once at stage-metadata extraction time
+(`stage_init_utils._resolve_prewarm_placeholder_builder`) and exposed on the
+stage client as `prewarm_placeholder_builder`; the orchestrator's
+`_prewarm_async_chunk_stages` reads it from there.
 
 ### Three-state async gate
 

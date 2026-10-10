@@ -68,14 +68,12 @@ def _is_tensor(value: Any) -> bool:
 # ===========================================================================
 
 
-def _ensure_list_fn(module: str) -> Any:
-    """Return the callable that reproduces the module's legacy ``_ensure_list``.
+_T2 = torch.tensor([1, 2])
+_T22 = torch.tensor([[1, 2], [3, 4]])
+_T24 = torch.tensor([1, 2, 3, 4])
 
-    Each module maps to the ``_common`` variant that locks its legacy semantics.
-    ``diffusion.output_formatter`` is the intentional exception: its wrap-only
-    semantics are NOT expressible through ``_common`` variants and it keeps its
-    own local ``_ensure_list``.
-    """
+
+def _ensure_list_cases():
     c = _common_import()
     mapping = {
         "qwen3_omni": c.ensure_list_unchanged,
@@ -83,59 +81,45 @@ def _ensure_list_fn(module: str) -> Any:
         "audex": c.ensure_list_flatten,
         "cosyvoice3": c.ensure_list,
         "step_audio2": c.ensure_list_preserve_none,
-        "diffusion.output_formatter": None,  # resolved via module below
+        "diffusion.output_formatter": _import("diffusion.output_formatter")._ensure_list,
     }
-    fn = mapping[module]
-    if fn is not None:
-        return fn
-    # diffusion.output_formatter keeps wrap-only semantics locally.
-    return _import("diffusion.output_formatter")._ensure_list
-
-
-def _ensure_list_cases():
+    # (module, callable, input, expected, expect_typeerror)
     return [
-        # (module, input, expected-or-None-if-tensor, expect_typeerror)
-        ("qwen3_omni", [1, 2], [1, 2], False),
-        ("qwen3_omni", _ConstantList([1, 2]), [1, 2], False),
-        # qwen3_omni returns non-list values *unchanged* (incl. None / tuple).
-        ("qwen3_omni", None, None, False),
-        ("qwen3_omni", (1, 2), (1, 2), False),
-        # qwen3_omni has NO tolist() branch: tensor comes back unchanged.
-        ("qwen3_omni", "TENSOR", None, False),
-        ("ming_flash_omni", [1, 2], [1, 2], False),
-        ("ming_flash_omni", _ConstantList([1, 2]), [1, 2], False),
-        ("ming_flash_omni", "TENSOR", [1, 2], False),
-        ("ming_flash_omni", (1, 2), [1, 2], False),
-        # ming_flash_omni: list(None) raises TypeError.
-        ("ming_flash_omni", None, None, True),
-        ("audex", None, [], False),
-        ("audex", "TENSOR", [1, 2, 3, 4], False),
-        ("audex", [1, 2], [1, 2], False),
-        ("audex", (1, 2), [1, 2], False),
-        # audex: list(5) raises TypeError.
-        ("audex", 5, None, True),
-        ("cosyvoice3", None, [], False),
-        ("cosyvoice3", (1, 2), [1, 2], False),
-        ("cosyvoice3", 5, [5], False),  # TypeError -> [x]
-        ("cosyvoice3", _ConstantList([1, 2]), [1, 2], False),
-        ("cosyvoice3", [1, 2], [1, 2], False),
-        ("step_audio2", _ConstantList([1, 2]), [1, 2], False),
-        ("step_audio2", "TENSOR", [1, 2], False),
-        ("step_audio2", (1, 2), [1, 2], False),
-        # step_audio2: non-iterable scalar -> [x]; None is not iterable -> [None].
-        ("step_audio2", 5, [5], False),
-        ("step_audio2", None, [None], False),
-        ("diffusion.output_formatter", [1, 2], [1, 2], False),
-        ("diffusion.output_formatter", None, [], False),
-        ("diffusion.output_formatter", 5, [5], False),
+        pytest.param(mapping["qwen3_omni"], [1, 2], [1, 2], False, id="qwen3_omni-list"),
+        pytest.param(mapping["qwen3_omni"], _ConstantList([1, 2]), [1, 2], False, id="qwen3_omni-constantlist"),
+        pytest.param(mapping["qwen3_omni"], None, None, False, id="qwen3_omni-none"),
+        pytest.param(mapping["qwen3_omni"], (1, 2), (1, 2), False, id="qwen3_omni-tuple"),
+        pytest.param(mapping["qwen3_omni"], _T2, None, False, id="qwen3_omni-tensor"),
+        pytest.param(mapping["ming_flash_omni"], [1, 2], [1, 2], False, id="ming_flash_omni-list"),
+        pytest.param(
+            mapping["ming_flash_omni"], _ConstantList([1, 2]), [1, 2], False, id="ming_flash_omni-constantlist"
+        ),
+        pytest.param(mapping["ming_flash_omni"], _T2, [1, 2], False, id="ming_flash_omni-tensor"),
+        pytest.param(mapping["ming_flash_omni"], (1, 2), [1, 2], False, id="ming_flash_omni-tuple"),
+        pytest.param(mapping["ming_flash_omni"], None, None, True, id="ming_flash_omni-none-raises"),
+        pytest.param(mapping["audex"], None, [], False, id="audex-none"),
+        pytest.param(mapping["audex"], _T24, [1, 2, 3, 4], False, id="audex-tensor"),
+        pytest.param(mapping["audex"], [1, 2], [1, 2], False, id="audex-list"),
+        pytest.param(mapping["audex"], (1, 2), [1, 2], False, id="audex-tuple"),
+        pytest.param(mapping["audex"], 5, None, True, id="audex-scalar-raises"),
+        pytest.param(mapping["cosyvoice3"], None, [], False, id="cosyvoice3-none"),
+        pytest.param(mapping["cosyvoice3"], (1, 2), [1, 2], False, id="cosyvoice3-tuple"),
+        pytest.param(mapping["cosyvoice3"], 5, [5], False, id="cosyvoice3-scalar"),
+        pytest.param(mapping["cosyvoice3"], _ConstantList([1, 2]), [1, 2], False, id="cosyvoice3-constantlist"),
+        pytest.param(mapping["cosyvoice3"], [1, 2], [1, 2], False, id="cosyvoice3-list"),
+        pytest.param(mapping["step_audio2"], _ConstantList([1, 2]), [1, 2], False, id="step_audio2-constantlist"),
+        pytest.param(mapping["step_audio2"], _T2, [1, 2], False, id="step_audio2-tensor"),
+        pytest.param(mapping["step_audio2"], (1, 2), [1, 2], False, id="step_audio2-tuple"),
+        pytest.param(mapping["step_audio2"], 5, [5], False, id="step_audio2-scalar"),
+        pytest.param(mapping["step_audio2"], None, [None], False, id="step_audio2-none"),
+        pytest.param(mapping["diffusion.output_formatter"], [1, 2], [1, 2], False, id="output_formatter-list"),
+        pytest.param(mapping["diffusion.output_formatter"], None, [], False, id="output_formatter-none"),
+        pytest.param(mapping["diffusion.output_formatter"], 5, [5], False, id="output_formatter-scalar"),
     ]
 
 
-@pytest.mark.parametrize("module,inp,expected,expect_typeerror", _ensure_list_cases())
-def test_ensure_list_golden(module, inp, expected, expect_typeerror):
-    fn = _ensure_list_fn(module)
-    if inp == "TENSOR":
-        inp = torch.tensor([[1, 2], [3, 4]]) if module == "audex" else torch.tensor([1, 2])
+@pytest.mark.parametrize("fn,inp,expected,expect_typeerror", _ensure_list_cases())
+def test_ensure_list_golden(fn, inp, expected, expect_typeerror):
     if expect_typeerror:
         with pytest.raises(TypeError):
             fn(inp)
@@ -143,9 +127,8 @@ def test_ensure_list_golden(module, inp, expected, expect_typeerror):
     result = fn(inp)
     if _is_tensor(result):
         # qwen3_omni may return a tensor unchanged.
-        assert _is_tensor(expected) or expected is None
-        if expected is None:
-            assert torch.equal(result, torch.tensor([1, 2]))
+        assert expected is None
+        assert torch.equal(result, _T2)
         return
     assert _norm(result) == expected
 
@@ -196,18 +179,14 @@ def _codes_audio(tensor):
     return {"codes": {"audio": tensor}}
 
 
-def _extract_last_frame_fn(module: str) -> Any:
-    """Return the callable that reproduces the module's legacy behavior.
-
-    The per-module ``_extract_last_frame`` helpers were removed by the RFC
-    refactor.  ``higgs_audio_v2`` is the intentional exception (its range
-    filter is not expressible through ``_common.extract_last_codec_frame`` and
-    it keeps its own local helper).  All other modules map to the canonical
-    implementation with the parameters that lock their legacy semantics.
-    """
+def _extract_last_frame_cases():
+    """Legacy per-module behavior: one callable + input per table row."""
     c = _common_import()
     mapping = {
-        "higgs_audio_v2": None,  # resolved below via module
+        # higgs_audio_v2 keeps its own local range-filtered helper (RFC refactor
+        # removed the other per-module helpers; its range filter is not
+        # expressible through _common.extract_last_codec_frame).
+        "higgs_audio_v2": _import("higgs_audio_v2")._extract_last_frame,
         "fish_speech": functools.partial(
             c.extract_last_codec_frame,
             key_path=("audio_codes",),
@@ -223,98 +202,101 @@ def _extract_last_frame_fn(module: str) -> Any:
         # other modules).
         "voxtral_tts": functools.partial(c.extract_last_codec_frame, to_long=False),
     }
-    fn = mapping[module]
-    if fn is not None:
-        return fn
-    return _import("higgs_audio_v2")._extract_last_frame
-
-
-@pytest.mark.parametrize(
-    "module,payload,expected,expect_error",
-    [
+    higgs = mapping["higgs_audio_v2"]
+    fish = mapping["fish_speech"]
+    qwen3 = mapping["qwen3_tts"]
+    voxtral = mapping["voxtral_tts"]
+    return [
         # higgs_audio_v2: codes.audio key path; range filter [-0, _NUM_REAL_CODES).
-        ("higgs_audio_v2", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
-        (
-            "higgs_audio_v2",
-            _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 1024]])),  # >= _NUM_REAL_CODES
-            None,
-            False,
-        ),
-        ("higgs_audio_v2", _codes_audio(torch.tensor([[0, 1], [2, 3], [-1, 5]])), None, False),
-        ("higgs_audio_v2", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
-        ("higgs_audio_v2", _codes_audio(torch.empty(0, 4)), None, False),
-        ("higgs_audio_v2", _codes_audio(torch.zeros(2, 2, 2)), None, True),  # 3-D -> ValueError
-        ("higgs_audio_v2", {"codes": {}}, None, False),
+        pytest.param(higgs, _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False, id="higgs-last-row"),
+        # >= _NUM_REAL_CODES
+        pytest.param(higgs, _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 1024]])), None, False, id="higgs-range"),
+        pytest.param(higgs, _codes_audio(torch.tensor([[0, 1], [2, 3], [-1, 5]])), None, False, id="higgs-negative"),
+        pytest.param(higgs, _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False, id="higgs-1d"),
+        pytest.param(higgs, _codes_audio(torch.empty(0, 4)), None, False, id="higgs-empty"),
+        # 3-D -> ValueError
+        pytest.param(higgs, _codes_audio(torch.zeros(2, 2, 2)), None, True, id="higgs-3d-raises"),
+        pytest.param(higgs, {"codes": {}}, None, False, id="higgs-missing-audio"),
         # fish_speech: TOP-LEVEL audio_codes key; audio_code_valid mask; cpu+long.
-        (
-            "fish_speech",
+        pytest.param(
+            fish,
             {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": torch.tensor([1, 1, 1])},
             [4, 5],
             False,
+            id="fish-valid",
         ),
-        (
-            "fish_speech",
+        pytest.param(
+            fish,
             {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": torch.tensor([1, 1, 0])},
             None,
             False,
+            id="fish-invalid-last",
         ),
-        (
-            "fish_speech",
+        pytest.param(
+            fish,
             {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": True},
             [4, 5],
             False,
+            id="fish-valid-true",
         ),
-        (
-            "fish_speech",
+        pytest.param(
+            fish,
             {"audio_codes": torch.tensor([[0, 1], [2, 3], [4, 5]]), "audio_code_valid": False},
             None,
             False,
+            id="fish-invalid-false",
         ),
-        (
-            "fish_speech",
-            {"audio_codes": torch.tensor([[0, 1], [2, 3], [0, 0]])},
-            None,
-            False,
-        ),  # no valid key -> frame.any() False
-        ("fish_speech", {"audio_codes": torch.tensor([1, 2, 3])}, [1, 2, 3], False),
+        # no valid key -> frame.any() False
+        pytest.param(fish, {"audio_codes": torch.tensor([[0, 1], [2, 3], [0, 0]])}, None, False, id="fish-zero-frame"),
+        pytest.param(fish, {"audio_codes": torch.tensor([1, 2, 3])}, [1, 2, 3], False, id="fish-1d"),
         # 1-D semantics: flat frames bypass the validity/zero gate (amy-why-3459 review).
-        ("fish_speech", {"audio_codes": torch.zeros(8, dtype=torch.long)}, [0] * 8, False),
-        (
-            "fish_speech",
+        pytest.param(fish, {"audio_codes": torch.zeros(8, dtype=torch.long)}, [0] * 8, False, id="fish-1d-zeros"),
+        pytest.param(
+            fish,
             {"audio_codes": torch.zeros(8, dtype=torch.long), "audio_code_valid": torch.tensor([False])},
             [0] * 8,
             False,
+            id="fish-1d-zeros-invalid",
         ),
-        (
-            "fish_speech",
+        pytest.param(
+            fish,
             {"audio_codes": torch.zeros(8, dtype=torch.long), "audio_code_valid": False},
             [0] * 8,
             False,
+            id="fish-1d-zeros-false",
         ),
-        ("fish_speech", {"audio_codes": torch.zeros(2, 2, 2)}, None, True),
-        ("fish_speech", {}, None, False),
+        pytest.param(fish, {"audio_codes": torch.zeros(2, 2, 2)}, None, True, id="fish-3d-raises"),
+        pytest.param(fish, {}, None, False, id="fish-missing-codes"),
         # qwen3_tts: codes.audio; frame.any() gate; long (no cpu).
-        ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
-        ("qwen3_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [0, 0]])), None, False),
-        ("qwen3_tts", _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False),
+        pytest.param(qwen3, _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False, id="qwen3-last-row"),
+        pytest.param(qwen3, _codes_audio(torch.tensor([[0, 1], [2, 3], [0, 0]])), None, False, id="qwen3-zero-frame"),
+        pytest.param(qwen3, _codes_audio(torch.tensor([1, 2, 3])), [1, 2, 3], False, id="qwen3-1d"),
         # 1-D semantics: flat frames bypass the zero gate (legacy qwen3_tts behavior).
-        ("qwen3_tts", _codes_audio(torch.zeros(8, dtype=torch.long)), [0] * 8, False),
-        ("qwen3_tts", _codes_audio(torch.zeros(2, 2, 2)), None, True),
-        ("qwen3_tts", {"codes": {}}, None, False),
+        pytest.param(qwen3, _codes_audio(torch.zeros(8, dtype=torch.long)), [0] * 8, False, id="qwen3-1d-zeros"),
+        pytest.param(qwen3, _codes_audio(torch.zeros(2, 2, 2)), None, True, id="qwen3-3d-raises"),
+        pytest.param(qwen3, {"codes": {}}, None, False, id="qwen3-missing-audio"),
         # voxtral_tts: validated via _common.extract_last_codec_frame(to_long=False).
-        ("voxtral_tts", _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False),
-        ("voxtral_tts", {"codes": {"audio": [torch.tensor([1, 2]), torch.tensor([3, 4])]}}, [3, 4], False),
-        ("voxtral_tts", {"codes": {}}, None, False),
-    ],
-)
-def test_extract_last_frame_golden(module, payload, expected, expect_error):
-    fn = _extract_last_frame_fn(module)
+        pytest.param(
+            voxtral, _codes_audio(torch.tensor([[0, 1], [2, 3], [4, 5]])), [4, 5], False, id="voxtral-last-row"
+        ),
+        pytest.param(
+            voxtral,
+            {"codes": {"audio": [torch.tensor([1, 2]), torch.tensor([3, 4])]}},
+            [3, 4],
+            False,
+            id="voxtral-list-audio",
+        ),
+        pytest.param(voxtral, {"codes": {}}, None, False, id="voxtral-missing-audio"),
+    ]
+
+
+@pytest.mark.parametrize("fn,payload,expected,expect_error", _extract_last_frame_cases())
+def test_extract_last_frame_golden(fn, payload, expected, expect_error):
     if expect_error:
         with pytest.raises(ValueError):
             fn(payload)
         return
-    result = fn(payload)
-    assert _norm(result) == expected
+    assert _norm(fn(payload)) == expected
 
 
 # ===========================================================================
@@ -329,34 +311,26 @@ def test_extract_last_frame_golden(module, payload, expected, expect_error):
 # ===========================================================================
 
 
+_T2F = torch.tensor([1.0, 2.0])
+
+
 @pytest.mark.parametrize(
     "inp,expected",
     [
-        ("TENSOR", "TENSOR"),
-        ([], None),
-        ("LIST_TENSOR", "LIST_TENSOR"),
-        ([1, 2], None),
-        (None, None),
-        (5, None),
+        pytest.param(_T2F, _T2F, id="tensor"),
+        pytest.param([], None, id="empty-list"),
+        pytest.param([_T2F], _T2F, id="list-tensor"),
+        pytest.param([1, 2], None, id="list-int"),
+        pytest.param(None, None, id="none"),
+        pytest.param(5, None, id="int"),
     ],
 )
 def test_to_cpu_tensor_glm_tts_golden(inp, expected):
-    c = _common_import()
-    fn = c.to_cpu_tensor
-    t = torch.tensor([1.0, 2.0])
-    if inp == "TENSOR":
-        value = t
-    elif inp == "LIST_TENSOR":
-        value = [t]
+    result = _common_import().to_cpu_tensor(inp)
+    if expected is None:
+        assert result is None
     else:
-        value = inp
-    result = fn(value)
-    if expected == "TENSOR":
-        assert torch.equal(result, t)
-    elif expected == "LIST_TENSOR":
-        assert torch.equal(result, t)
-    else:
-        assert result is expected
+        assert torch.equal(result, expected)
 
 
 # ===========================================================================
@@ -367,29 +341,17 @@ def test_to_cpu_tensor_glm_tts_golden(inp, expected):
 @pytest.mark.parametrize(
     "inp,expected",
     [
-        ("SCALAR_TENSOR", [5]),
-        ("VEC_TENSOR", [1, 2, 3]),
-        ("MAT_TENSOR", [1, 2]),  # 2-D -> first row only
-        ("NESTED_LIST", [1, 2]),  # nested list -> first nested row only
-        ([1, 2, 3], [1, 2, 3]),
-        (None, []),
-        (5, [5]),
+        pytest.param(torch.tensor(5), [5], id="scalar-tensor"),
+        pytest.param(torch.tensor([1, 2, 3]), [1, 2, 3], id="vec-tensor"),
+        pytest.param(torch.tensor([[1, 2], [3, 4]]), [1, 2], id="mat-tensor"),  # 2-D -> first row only
+        pytest.param([[1, 2], [3, 4]], [1, 2], id="nested-list"),  # nested list -> first nested row only
+        pytest.param([1, 2, 3], [1, 2, 3], id="list"),
+        pytest.param(None, [], id="none"),
+        pytest.param(5, [5], id="int"),
     ],
 )
 def test_to_token_id_list_dynin_omni_golden(inp, expected):
-    c = _common_import()
-    fn = c.to_token_id_list
-    if inp == "SCALAR_TENSOR":
-        value = torch.tensor(5)
-    elif inp == "VEC_TENSOR":
-        value = torch.tensor([1, 2, 3])
-    elif inp == "MAT_TENSOR":
-        value = torch.tensor([[1, 2], [3, 4]])
-    elif inp == "NESTED_LIST":
-        value = [[1, 2], [3, 4]]
-    else:
-        value = inp
-    assert fn(value) == expected
+    assert _common_import().to_token_id_list(inp) == expected
 
 
 def test_to_token_id_list_cosyvoice3_recursive_golden():

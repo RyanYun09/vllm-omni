@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Canonical, shared helpers for ``stage_input_processors``.
-
-Implementation notes are golden-locked in
-``tests/model_executor/stage_input_processors/test_common_helpers_golden.py``.
-"""
+"""Canonical shared helpers; semantics golden-locked in ``test_common_helpers_golden.py``."""
 
 from __future__ import annotations
 
@@ -29,15 +25,10 @@ def _unwrap_constant_list(x: Any) -> Any:
 
 
 def ensure_list(x: Any) -> list[Any]:
-    """Canonical ``ensure_list``.
+    """Canonical ``ensure_list`` (union of legacy variants).
 
-    Semantics (the union of legacy variants):
-    - ``ConstantList``-like objects (``_x``) are unwrapped.
-    - ``list`` / ``tuple`` are converted to a fresh ``list``.
-    - ``torch.Tensor`` is converted via ``.tolist()`` (all dims flattened).
-    - ``None`` becomes ``[]``.
-    - Any other iterable is converted via ``list(x)``; a non-iterable scalar
-      becomes ``[x]``.
+    ``ConstantList`` unwrapped; tensor ``.tolist()``; ``None`` -> ``[]``;
+    other iterable via ``list(x)``; non-iterable scalar wrapped as ``[x]``.
     """
     x = _unwrap_constant_list(x)
     if isinstance(x, torch.Tensor):
@@ -52,20 +43,8 @@ def ensure_list(x: Any) -> list[Any]:
         return [x]
 
 
-def ensure_list_or_empty(x: Any) -> list[Any]:
-    """Explicit alias: always returns a list; ``None`` -> ``[]``.
-
-    Matches ``audex`` / ``cosyvoice3`` ``_ensure_list`` semantics.
-    """
-    return ensure_list(x)
-
-
 def ensure_list_unchanged(x: Any) -> Any:
-    """Legacy ``qwen3_omni._ensure_list`` semantics.
-
-    ``ConstantList`` is unwrapped; a non-``list`` value (including ``None``,
-    a ``tuple``, or a ``torch.Tensor``) is returned **unchanged**.
-    """
+    """Legacy ``qwen3_omni._ensure_list``: non-``list`` (incl. ``None``) unchanged."""
     x = _unwrap_constant_list(x)
     if not isinstance(x, list):
         return x
@@ -73,12 +52,7 @@ def ensure_list_unchanged(x: Any) -> Any:
 
 
 def ensure_list_strict(x: Any) -> list[Any]:
-    """Strict ``ensure_list``: no ``None`` special-case, non-iterables raise.
-
-    Matches ``ming_flash_omni._ensure_list``: ``None`` and non-iterable
-    scalars both fall through to ``list(x)`` and raise ``TypeError``; a
-    ``torch.Tensor`` is converted via ``.tolist()``.
-    """
+    """Strict variant (``ming_flash_omni``): no ``None`` case; non-iterable raises."""
     x = _unwrap_constant_list(x)
     if isinstance(x, torch.Tensor):
         return x.detach().cpu().tolist()
@@ -88,11 +62,7 @@ def ensure_list_strict(x: Any) -> list[Any]:
 
 
 def ensure_list_flatten(x: Any) -> list[Any]:
-    """``ensure_list`` that **flattens** tensors with ``reshape(-1).tolist()``.
-
-    Matches ``audex._ensure_list``: ``None`` -> ``[]``; a ``torch.Tensor`` is
-    flattened to a 1-D list; a non-iterable scalar raises ``TypeError``.
-    """
+    """Flattening variant (``audex``): tensors via ``reshape(-1).tolist()``."""
     x = _unwrap_constant_list(x)
     if x is None:
         return []
@@ -104,16 +74,7 @@ def ensure_list_flatten(x: Any) -> list[Any]:
 
 
 def ensure_list_preserve_none(x: Any) -> list[Any]:
-    """``ensure_list`` that **preserves** ``None`` as ``[None]``.
-
-    Matches ``step_audio2._ensure_list``:
-    - ``ConstantList``-like objects (``_x``) are unwrapped.
-    - ``torch.Tensor`` is converted via ``.tolist()`` (dimensions preserved).
-    - ``list`` / ``tuple`` are converted to a fresh ``list``.
-    - Any other **iterable** is converted via ``list(x)``.
-    - A non-iterable value (including ``None`` and a scalar like ``5``) is
-      wrapped as ``[x]`` (so ``None`` -> ``[None]``, ``5`` -> ``[5]``).
-    """
+    """Preserve-``None`` variant (``step_audio2``): non-iterable wrapped as ``[x]``."""
     if hasattr(x, "_x"):
         return list(x._x)
     if isinstance(x, torch.Tensor):
@@ -124,13 +85,9 @@ def ensure_list_preserve_none(x: Any) -> list[Any]:
 
 
 def ensure_list_wrap_only(x: Any) -> list[Any]:
-    """Wrap-only ``ensure_list``: list passthrough, non-list -> ``[x]``, ``None`` -> ``[]``.
+    """Wrap-only variant (``diffusion.output_formatter``): non-list wrapped whole.
 
-    Preserves the legacy ``diffusion.output_formatter._ensure_list`` semantics:
-    a non-list primary payload is wrapped as ``[x]``.  Unlike the canonical
-    :func:`ensure_list`, it performs **no** tensor flattening, no dict-key
-    iteration, and no row-wise iteration of an iterable (e.g. a PIL ``Image``) —
-    a non-``list`` value is wrapped whole, verbatim.
+    Unlike :func:`ensure_list`: no tensor flattening, no iterable iteration.
     """
     if isinstance(x, list):
         return x
@@ -143,13 +100,7 @@ def ensure_list_wrap_only(x: Any) -> list[Any]:
 
 
 def to_cpu_tensor(value: Any) -> torch.Tensor | None:
-    """Convert a value to a CPU tensor when possible; else ``None``.
-
-    Matches ``glm_tts._to_cpu_tensor``:
-    - a list is unwrapped to its first element first;
-    - empty list -> ``None``;
-    - only ``torch.Tensor`` inputs yield a result (``detach().cpu()``).
-    """
+    """CPU tensor when possible; else ``None`` (``glm_tts``)."""
     if isinstance(value, list):
         if not value:
             return None
@@ -165,14 +116,10 @@ def to_cpu_tensor(value: Any) -> torch.Tensor | None:
 
 
 def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
-    """Convert a token-ish value into a flat ``list[int]``.
+    """Flatten a token-ish value to ``list[int]``.
 
-    ``recursive=False`` (default) matches ``dynin_omni._to_token_id_list``:
-    for a 2-D tensor or a nested list only the **first** row / element is
-    used.  ``recursive=True`` matches ``cosyvoice3._to_token_id_list``:
-    per-item recursive normalization — nested ``list``/``tuple`` and
-    non-scalar tensors anywhere in the tree are flattened, so
-    ``[torch.tensor([[4, 5]])]`` -> ``[4, 5]`` and ``(4, 5)`` -> ``[4, 5]``.
+    ``recursive=False`` matches ``dynin_omni`` (first row only);
+    ``recursive=True`` matches ``cosyvoice3`` (per-item flatten).
     """
     if recursive:
         return _to_token_id_list_recursive(value)
@@ -195,11 +142,7 @@ def to_token_id_list(value: Any, *, recursive: bool = False) -> list[int]:
 
 
 def _to_token_id_list_recursive(value: Any) -> list[int]:
-    """Recursive token-id flattening (per-item normalization).
-
-    ``None`` -> ``[]``; a tensor is reshaped flat; every item that is a tensor
-    or a ``list``/``tuple`` is recursed into; scalars are converted with ``int()``.
-    """
+    """Recursive token-id flattening: tensors reshaped, scalars ``int()``."""
     if value is None:
         return []
     if isinstance(value, torch.Tensor):
@@ -227,15 +170,10 @@ def revert_delay_pattern(
     expected_codebooks: int | None = None,
     allow_short: bool = False,
 ) -> torch.Tensor:
-    """Reverse the MusicGen-style delay pattern.
+    """Reverse the MusicGen-style delay pattern ``[Q, T]`` -> ``[Q, seq_len]``.
 
-    Input ``[Q, T]`` (``T = seq_len + Q - 1``) -> output ``[Q, seq_len]``.
-
-    ``allow_short=True`` matches ``higgs_audio_v2``: when ``T < Q`` the input
-    is returned **unchanged**.  ``allow_short=False`` (default, matches
-    ``higgs_audio_v3``) raises on ``T < Q``.  When ``expected_codebooks`` is
-    given, a row-count mismatch raises ``ValueError`` (v3 checks ``Q ==
-    _NUM_CODEBOOKS``; v2 does not).
+    ``allow_short`` (higgs v2) vs strict raise (v3); ``expected_codebooks``
+    row-count check (v3 only).
     """
     if audio_codes_qt.ndim != 2:
         raise ValueError(f"_revert_delay_pattern expects [Q, T] input; got {tuple(audio_codes_qt.shape)}")
@@ -262,13 +200,9 @@ def filter_real_code_frames(
     num_real_codes: int,
     layout: str = "frames_first",
 ) -> torch.Tensor:
-    """Keep only frames whose codebook values are all in ``[0, num_real_codes)``.
+    """Keep frames with all codebook values in ``[0, num_real_codes)``.
 
-    ``layout="frames_first"`` matches ``higgs_audio_v2``: input is
-    ``[num_frames, num_codebooks]`` and the same layout is returned.
-    ``layout="codebooks_first"`` matches ``higgs_audio_v3``: input is
-    ``[num_codebooks, num_frames]``; frames are filtered and the layout is
-    restored (``[num_codebooks, kept_frames]``).
+    ``frames_first`` (v2) vs ``codebooks_first`` (v3, transposed) layouts.
     """
     if audio_codes.numel() == 0:
         return audio_codes
@@ -297,25 +231,11 @@ def extract_last_codec_frame(
     to_cpu: bool = False,
     to_long: bool = True,
 ) -> torch.Tensor | None:
-    """Extract the last inter-stage codec frame from a payload.
+    """Extract the last inter-stage codec frame (4 legacy variants merged).
 
-    Parameterized canonical implementation covering the four legacy
-    ``_extract_last_frame`` variants:
-
-    - ``key_path``: ``("codes", "audio")`` (higgs_v2 / qwen3_tts / voxtral)
-      vs ``("audio_codes",)`` (fish_speech top-level).
-    - ``validate``:
-      - ``None``: only empty checks (higgs_v2 / voxtral);
-      - ``"any"``: drop a 2-D frame whose values are all zero (qwen3_tts);
-      - ``"valid_mask"``: consult ``audio_code_valid`` then fall back to
-        ``any`` for 2-D frames (fish_speech).
-    - ``to_cpu`` / ``to_long``: fish_speech moves to CPU and casts to long;
-      higgs_v2 / qwen3_tts cast to long without moving to CPU; voxtral does
-      neither (plain ``flatten``).
-
-    Legacy semantics: the validity/zero gate applies only to 2-D input; a
-    flat 1-D codec frame is returned directly (Fish Speech / Qwen3-TTS).
-    The returned tensor is always 1-D.
+    ``key_path`` codes/audio vs audio_codes; ``validate`` None/"any"/"valid_mask";
+    ``to_cpu``/``to_long`` (fish_speech).  Validity gate applies only to 2-D
+    frames; 1-D frames return directly; result is always 1-D.
     """
     if not isinstance(payload, dict):
         return None
@@ -381,9 +301,7 @@ def _chat_template_prompt_len(
 ) -> int:
     """Qwen chat-template scan: ``sum(user segments) + 9`` (assistant tail).
 
-    Shared by ``mode="full"`` (prompt + generated ids) and ``mode="stage0_only"``
-    (stage-0 ids only, fed to both roles) so the sync forward placeholder and
-    the async-chunk prewarm estimate return the same length.
+    Shared by both modes so sync forward and async prewarm agree.
     """
     thinker_sequences = torch.tensor(all_ids, dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
     input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=device).unsqueeze(0)  # [1, T]
@@ -423,17 +341,10 @@ def compute_placeholder_prompt_len(
 ) -> int:
     """Compute the downstream placeholder prompt length.
 
-    ``mode="full"`` replicates the legacy Qwen chat-template scan: the input is
-    an ``OmniPayload``-like dict with ``ids: {"all": [...], "prompt": [...]}``,
-    and the length is ``sum(user segments) + 9`` (the assistant tail).
-
-    ``mode="stage0_only"`` is the async-chunk **prewarm** estimate.  There is no
-    upstream output yet, so ``ids_or_prompt`` is the stage-0 input token-id list,
-    which is fed to **both** chat-template roles (``all`` / ``prompt``) — exactly
-    what ``adapter.compute_talker_prompt_ids_length`` does.  This makes the
-    prewarm builder and the inline fallback return the same number (15 for the
-    golden prompt; 6 == 6 for a single user segment), removing the
-    ``len()`` vs scan split.
+    ``mode="full"``: ``ids.all``/``ids.prompt`` scan (``sum(user) + 9``).
+    ``mode="stage0_only"``: prewarm estimate feeding stage-0 ids to both roles,
+    matching ``adapter.compute_talker_prompt_ids_length`` so builder and inline
+    fallback agree.
     """
     if mode == "stage0_only":
         prompt = list(ids_or_prompt)
@@ -450,12 +361,7 @@ def pack_placeholder_prompt(
     prompt_len: int,
     voice_metadata: dict[str, Any] | None = None,
 ) -> OmniTokensPrompt:
-    """Pack a KV-slot placeholder prompt: ``[0] * prompt_len`` + voice meta.
-
-    Shared by both the sync forward path (``*_token_only``) and the
-    async-chunk prewarm path.  Bulk conditioning arrives separately via the
-    connector, so only the length matters here.
-    """
+    """Pack a KV-slot placeholder prompt: ``[0] * prompt_len`` + voice meta."""
     return OmniTokensPrompt(
         prompt_token_ids=[0] * max(1, int(prompt_len)),
         additional_information=(voice_metadata if voice_metadata else None),  # type: ignore[typeddict-item]

@@ -153,10 +153,10 @@ class StageEngineCoreClientBase(StageClientBase):
             self.prompt_expand_func = metadata.prompt_expand_func
             self.custom_process_input_func = metadata.custom_process_input_func
             self.async_chunk_prewarm_payload_func = getattr(metadata, "async_chunk_prewarm_payload_func", None)
-            # Raw ``sync_process_input_func`` path so the orchestrator can
-            # resolve the async-chunk prewarm placeholder builder
-            # (``build_prewarm_placeholder``) at prewarm time.
+            # Raw ``sync_process_input_func`` path (dead-processor hint) plus the
+            # already-resolved dual-entry ``build_prewarm_placeholder`` builder.
             self.sync_process_input_func = metadata.sync_process_input_func
+            self.prewarm_placeholder_builder = metadata.prewarm_placeholder_builder
 
         self.engine_outputs: Any = None
         self.client_addresses = dict(client_addresses or {})

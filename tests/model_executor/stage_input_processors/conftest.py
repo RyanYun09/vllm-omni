@@ -1,26 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Test-support import fallback for ``vllm_omni`` pure-logic tests.
+"""Test-only import fallback: lets pure-logic tests run without real ``vllm``.
 
-These unit tests exercise ``vllm_omni`` helper logic without a running vLLM
-runtime.  When the real ``vllm`` package is not installed, importing
-``vllm_omni`` submodules would fail at ``import vllm``; this conftest then
-installs a *test-only* fallback that:
-
-1. Bypasses ``vllm_omni/__init__.py`` (so its ``patch`` / ``transformers``
-   machinery is never executed) by pre-inserting a synthetic ``vllm_omni``
-   package into ``sys.modules`` whose ``__path__`` points at the real
-   package directory.
-2. Stubs the entire ``vllm`` package tree with permissive ``_Dummy`` classes
-   so module-level ``from vllm... import ...`` statements resolve.
-
-The fallback is active **only** when real ``vllm`` is not importable.  When
-vllm is available (e.g. on CI) it is a no-op and the real package is imported,
-which guards against the fallback masking genuine import problems.
-
-Scope: only pure-logic / unit-level tests (no model execution). Any test that
-needs a real vLLM runtime must be marked to run on GPU/NPU CI instead.
+Bypasses ``vllm_omni/__init__.py`` via a synthetic package in ``sys.modules``
+and stubs the ``vllm`` tree with permissive ``_Dummy`` classes.  Active only
+when real ``vllm`` is unavailable (CI no-op), so it cannot mask genuine
+import problems.  Scope: pure-logic unit tests only.
 """
 
 import importlib.abc
@@ -38,21 +24,14 @@ _VLLM_OMNI_DIR = os.path.join(_REPO_ROOT, "vllm_omni")
 
 
 class _Meta(type):
-    """Metaclass so that *class-level* attribute access on a _Dummy also
-    yields _Dummy (e.g. ``SomeStubClass.foo`` used in module-level code)."""
+    """Class-level attribute access on a ``_Dummy`` also yields ``_Dummy``."""
 
     def __getattr__(cls, name):
         return _Dummy
 
 
 class _Dummy(metaclass=_Meta):
-    """Permissive stand-in for any vllm symbol.
-
-    Supports subclassing (``__mro_entries__``), ``total=False`` TypedDict
-    style (``__init_subclass__``), ``X | None`` unions, and arbitrary
-    attribute / call / item access — enough to get module *import* past the
-    vllm dependency while keeping pure helper functions callable.
-    """
+    """Permissive stand-in for any vllm symbol (import-grade compatibility)."""
 
     def __init__(self, *args, **kwargs):
         pass

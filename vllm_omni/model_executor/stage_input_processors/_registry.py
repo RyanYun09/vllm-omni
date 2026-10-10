@@ -1,44 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
-"""Stage-input processor registry.
+"""Stage-input processor registry: signature-level structural validation.
 
-This module is the **structural validation** layer behind the three ``importlib``
-resolution points that are validated as independent symbol lookups:
+Serves the three importlib resolution points (orchestrator-side
+``custom_process_input_func``/``sync_process_input_func``, producer-side
+``*_full_payload``, producer-side ``*_async_chunk``).  Checks are purely
+signature-based (``inspect.signature``); behaviour is covered by the golden /
+parity tests.
 
-* ``engine/stage_init_utils.extract_legacy_stage_metadata`` — consumer-side
-  (orchestrator) input processors (``custom_process_input_func`` /
-  ``sync_process_input_func``).
-* ``worker/omni_connector_model_runner_mixin._load_custom_func`` — the
-  producer-side full-payload builder (``FullPayloadProducer``).
-* ``distributed/omni_connectors/transfer_adapter/chunk_transfer_adapter.__init__``
-  — the producer-side async-chunk builder (``AsyncChunkProducer``).
+Producer kwargs are contract: full-payload keeps ``pooling_output``
+(``is_finished`` optional — the worker retries without it); async-chunk keeps
+``multimodal_output`` and **must** accept ``is_finished`` (the scheduler always
+passes it).
 
-The registry only performs signature-level structural checks
-(``inspect.signature``); it never executes processor logic and never loads
-model weights.  Behavioural guarantees belong to the golden / parity tests.
-
-Producer kwargs are contract.  ``FullPayloadProducer`` keeps ``pooling_output``
-(``is_finished`` is **optional** — the worker retries without it when the
-processor rejects the kwarg); ``AsyncChunkProducer`` keeps ``multimodal_output``
-and **must** accept ``is_finished`` — the scheduler always passes it on the
-async-chunk path (see ``chunk_transfer_adapter._send_single_request``).
-
-Kind inference is name-driven (suffix-based):
-
-* ``_token_only``            -> ``placeholder_prompt_builder``
-* ``_full_payload`` / ``_batch`` -> ``producer_full_payload``
-* ``_async_chunk``           -> ``producer_async_chunk``
-* ``ar2diffusion`` / ``ar2dit`` / ``thinker2imagegen`` (and friends) ->
-  ``diffusion_input_builder``
-* no suffix                  -> ``legacy_orchestrator_builder``
-* ``moss_tts.talker2codec`` (legacy multi-source shape) ->
-  ``legacy_multi_source``
-
-``resolve_processor`` returns a :class:`ProcessorSpec` whose ``fn`` is the
-same callable object produced by the legacy
-``getattr(importlib.import_module(mod_path), fn_name)`` lookups, so callers keep
-identical runtime behaviour while gaining validated kind metadata.
+Kind inference is name-driven (suffix-based); ``resolve_processor`` returns a
+:class:`ProcessorSpec` whose ``fn`` matches the legacy importlib lookup.
 """
 
 from __future__ import annotations
@@ -46,9 +23,9 @@ from __future__ import annotations
 import importlib
 import inspect
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn, get_args
 
 ProcessorKind = Literal[
     "placeholder_prompt_builder",
@@ -87,16 +64,7 @@ _MOSS_MULTI_SOURCE_NAMES: frozenset[str] = frozenset({"talker2codec"})
 _PRODUCER_KINDS: frozenset[str] = frozenset({"producer_full_payload", "producer_async_chunk"})
 
 #: All valid :class:`ProcessorKind` values (used to validate manual overrides).
-_PROCESSOR_KINDS: frozenset[str] = frozenset(
-    {
-        "placeholder_prompt_builder",
-        "diffusion_input_builder",
-        "legacy_orchestrator_builder",
-        "producer_full_payload",
-        "producer_async_chunk",
-        "legacy_multi_source",
-    }
-)
+_PROCESSOR_KINDS: frozenset[str] = frozenset(get_args(ProcessorKind))
 
 #: Soft-check scalar return annotations that contradict a stage-input role.
 _SCALAR_RETURN_ANNOTATIONS: frozenset[Any] = frozenset({int, str, bool, float})
@@ -116,14 +84,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ProcessorSpec:
-    """Resolved and validated stage-input processor.
-
-    Attributes:
-        path: The dotted ``module.attr`` path the processor was resolved from.
-        kind: The inferred (or overridden) processor kind.
-        fn: The callable itself — identical to what the legacy
-            ``getattr(importlib.import_module(...), ...)`` lookup returned.
-    """
+    """Resolved and validated stage-input processor (path, kind, fn)."""
 
     path: str
     kind: ProcessorKind
@@ -131,12 +92,7 @@ class ProcessorSpec:
 
 
 class ProcessorValidationError(Exception):
-    """A stage-input processor failed structural validation.
-
-    Carries enough context to locate the offending stage / config line:
-    ``stage_id`` (when a ``stage_config`` was supplied), ``path``, ``kind`` and
-    the specific ``rule`` that was violated.
-    """
+    """A stage-input processor failed structural validation."""
 
     def __init__(
         self,
@@ -155,19 +111,20 @@ class ProcessorValidationError(Exception):
         super().__init__(self._format())
 
     def _format(self) -> str:
-        parts: list[str] = []
-        if self.stage_id is not None:
-            parts.append(f"stage_id={self.stage_id}")
-        if self.path:
-            parts.append(f"path={self.path!r}")
-        if self.kind:
-            parts.append(f"kind={self.kind!r}")
-        if self.rule:
-            parts.append(f"rule={self.rule}")
-        detail = ", ".join(parts) or "processor validation failed"
-        if self.message:
-            return f"{detail}: {self.message}"
-        return detail
+        detail = (
+            ", ".join(
+                f"{name}={value}"
+                for name, value in (
+                    ("stage_id", self.stage_id),
+                    ("path", repr(self.path) if self.path else None),
+                    ("kind", repr(self.kind) if self.kind else None),
+                    ("rule", self.rule),
+                )
+                if value is not None
+            )
+            or "processor validation failed"
+        )
+        return f"{detail}: {self.message}" if self.message else detail
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +142,6 @@ def _module_part(path: str) -> str:
 
 def _stage_id_of(stage_config: Any) -> int | None:
     """Best-effort stage id extraction from an arbitrary config object."""
-    if stage_config is None:
-        return None
     sid = getattr(stage_config, "stage_id", None)
     if sid is None:
         return None
@@ -202,14 +157,7 @@ def _stage_id_of(stage_config: Any) -> int | None:
 
 
 def import_symbol(path: str) -> Any:
-    """Import a dotted ``module.attr`` symbol (importlib + ``getattr``).
-
-    This mirrors the two-step shape used by every legacy resolution point:
-    ``importlib.import_module(module_path)`` then ``getattr(module, attr)``.
-    A missing attribute or module raises the underlying
-    ``ImportError``/``AttributeError``; callers that need a best-effort lookup
-    (e.g. the worker candidate chain) catch these themselves.
-    """
+    """Import a dotted ``module.attr`` symbol; missing module/attr propagate."""
     if not isinstance(path, str) or not path:
         raise ValueError(f"processor path must be a non-empty dotted string, got {path!r}")
     module_path, attr_name = path.rsplit(".", 1)
@@ -226,13 +174,7 @@ _KIND_OVERRIDES: dict[str, ProcessorKind] = {}
 
 
 def register_processor(path: str, kind: ProcessorKind) -> None:
-    """Register a manual kind override for a processor *path*.
-
-    This is an escape hatch for models whose function names do not follow the
-    suffix convention.  ``infer_kind`` consults these overrides before
-    applying the suffix rules.  Overrides are validated eagerly so typos fail
-    fast.
-    """
+    """Register a manual kind override (escape hatch for non-suffix names)."""
     if not isinstance(path, str) or not path:
         raise ValueError(f"processor path must be a non-empty dotted string, got {path!r}")
     if kind not in _PROCESSOR_KINDS:
@@ -241,12 +183,7 @@ def register_processor(path: str, kind: ProcessorKind) -> None:
 
 
 def infer_kind(fn: Any, *, path: str) -> ProcessorKind:
-    """Infer the processor kind from the *suffix* of ``path``.
-
-    ``fn`` is accepted for API symmetry with :func:`validate_processor` but the
-    inference is purely name-driven (suffix-based convention); the callable
-    object itself is not inspected here.
-    """
+    """Infer the processor kind from the *suffix* of ``path`` (name-driven)."""
     del fn  # inference is name-based; kept for a symmetric API
     if not isinstance(path, str) or not path or "." not in path:
         raise ValueError(f"processor path must be a non-empty dotted string, got {path!r}")
@@ -278,11 +215,8 @@ def infer_kind(fn: Any, *, path: str) -> ProcessorKind:
 
 
 def _warn(path: str, kind: ProcessorKind | None, rule: str, message: str) -> None:
-    """Emit a soft ``RuntimeWarning`` for a non-fatal structural mismatch."""
     warnings.warn(
-        f"stage-input processor {path!r} (kind={kind!r}, rule={rule}): {message}",
-        RuntimeWarning,
-        stacklevel=3,
+        f"stage-input processor {path!r} (kind={kind!r}, rule={rule}): {message}", RuntimeWarning, stacklevel=3
     )
 
 
@@ -293,7 +227,7 @@ def _fail(
     rule: str,
     stage_config: Any,
     message: str,
-) -> None:
+) -> NoReturn:
     raise ProcessorValidationError(
         stage_id=_stage_id_of(stage_config),
         path=path,
@@ -304,13 +238,14 @@ def _fail(
 
 
 def _check_orchestrator_first_param(
-    params: Mapping[str, inspect.Parameter],
+    signature: inspect.Signature,
     *,
     path: str,
     kind: ProcessorKind,
     stage_config: Any,
 ) -> None:
     """First param must be ``source_outputs`` or the signature must carry ``ctx``."""
+    params = signature.parameters
     names = [
         name
         for name, param in params.items()
@@ -326,40 +261,31 @@ def _check_orchestrator_first_param(
         )
 
 
-def _check_suffix(
-    path: str,
-    kind: ProcessorKind,
-    *,
-    suffix_pool: tuple[str, ...],
-    stage_config: Any,
-    what: str,
-) -> None:
-    fn_name = _fn_name(path)
-    if not any(fn_name.endswith(suffix) for suffix in suffix_pool):
-        _warn(path, kind, "suffix_kind_mismatch", f"name {fn_name!r} does not match expected {what}")
-
-
 def _has_var_keyword(params: Mapping[str, inspect.Parameter]) -> bool:
     """Whether the signature accepts arbitrary keywords (``**kwargs``)."""
     return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
 
 
-def _check_full_payload_is_finished(
+def _check_is_finished(
     params: Mapping[str, inspect.Parameter],
     *,
     path: str,
     kind: ProcessorKind,
     stage_config: Any,
+    required: bool,
 ) -> None:
-    """``is_finished`` is optional for the full-payload producer.
-
-    The worker passes it best-effort and retries without it on
-    ``TypeError`` (see ``omni_connector_model_runner_mixin._build_custom_process_payload``).
-    A ``**kwargs`` producer accepts it through ``VAR_KEYWORD``.
-    """
+    """Validate the ``is_finished`` kwarg contract (hard only for async-chunk)."""
     if _has_var_keyword(params):
         return  # **kwargs accepts is_finished
     if "is_finished" not in params:
+        if required:
+            _fail(
+                path=path,
+                kind=kind,
+                rule="is_finished_required",
+                stage_config=stage_config,
+                message="async-chunk producer must declare 'is_finished' (the scheduler always passes it)",
+            )
         _warn(
             path,
             kind,
@@ -367,52 +293,25 @@ def _check_full_payload_is_finished(
             "full-payload producer does not declare is_finished; worker retries without it (best-effort)",
         )
         return
-    if params["is_finished"].kind == inspect.Parameter.POSITIONAL_ONLY:
+    is_finished_param = params["is_finished"]
+    if is_finished_param.kind == inspect.Parameter.POSITIONAL_ONLY:
+        if required:
+            _fail(
+                path=path,
+                kind=kind,
+                rule="is_finished_positional_only",
+                stage_config=stage_config,
+                message="async-chunk producer declares 'is_finished' positional-only; "
+                "it must be keyword-only or have a default",
+            )
         _warn(
             path,
             kind,
             "is_finished_positional_only",
             "full-payload producer declares is_finished positional-only; worker retries without it",
         )
-
-
-def _check_async_chunk_is_finished(
-    params: Mapping[str, inspect.Parameter],
-    *,
-    path: str,
-    kind: ProcessorKind,
-    stage_config: Any,
-) -> None:
-    """``is_finished`` is **required** for the async-chunk producer.
-
-    The scheduler always passes ``is_finished`` (see
-    ``chunk_transfer_adapter._send_single_request``), so a processor that cannot
-    accept it is a hard configuration error.  A ``**kwargs`` producer accepts it
-    through ``VAR_KEYWORD``.
-    """
-    if _has_var_keyword(params):
-        return  # **kwargs accepts is_finished
-    if "is_finished" not in params:
-        _fail(
-            path=path,
-            kind=kind,
-            rule="is_finished_required",
-            stage_config=stage_config,
-            message="async-chunk producer must declare 'is_finished' (the scheduler always passes it)",
-        )
-        return  # unreachable; kept for type-checkers
-    is_finished_param = params["is_finished"]
-    if is_finished_param.kind == inspect.Parameter.POSITIONAL_ONLY:
-        _fail(
-            path=path,
-            kind=kind,
-            rule="is_finished_positional_only",
-            stage_config=stage_config,
-            message="async-chunk producer declares 'is_finished' positional-only; "
-            "it must be keyword-only or have a default",
-        )
-        return  # unreachable
-    if (
+        return
+    if required and (
         is_finished_param.kind != inspect.Parameter.KEYWORD_ONLY
         and is_finished_param.default is inspect.Parameter.empty
     ):
@@ -439,18 +338,11 @@ def _check_producer_keyword_bind(
     required: tuple[str, ...],
     what: str,
 ) -> None:
-    """Bind the exact worker keyword call shape to *signature*.
+    """Bind the worker keyword call to *signature* via ``inspect.Signature.bind``.
 
-    The worker invokes producers with a fixed keyword call (see
-    ``omni_connector_model_runner_mixin._build_custom_process_payload`` for the
-    full-payload producer and ``chunk_transfer_adapter._send_single_request``
-    for the async-chunk producer).  We probe that call with
-    ``inspect.Signature.bind`` so a producer that *declares* the right parameter
-    names but cannot actually accept the keyword call — wrong parameter names,
-    positional-only payload parameters, or missing required parameters — is
-    rejected at configuration time instead of failing later when the worker
-    passes ``pooling_output=`` / ``multimodal_output=``.  A ``**kwargs``
-    (``VAR_KEYWORD``) producer accepts any keyword and is therefore compatible.
+    Producers that declare the right names but reject the keyword call shape
+    fail at configuration time instead of when the worker passes
+    ``pooling_output=`` / ``multimodal_output=``.
     """
     try:
         signature.bind(**{name: _BIND_PLACEHOLDER for name in required})
@@ -464,43 +356,89 @@ def _check_producer_keyword_bind(
         )
 
 
-def _check_return_annotation(
+def _check_full_payload(
     signature: inspect.Signature,
     *,
     path: str,
     kind: ProcessorKind,
+    stage_config: Any,
 ) -> None:
-    """Soft return-annotation check: mismatches warn, never fail."""
-    ann = signature.return_annotation
-    if ann is inspect.Signature.empty or isinstance(ann, str):
-        # Unannotated or postponed-string annotations are not verifiable here.
-        return
-    if ann in _SCALAR_RETURN_ANNOTATIONS:
-        _warn(
-            path,
-            kind,
-            "return_annotation",
-            f"return annotation {ann!r} is a scalar, unlikely a stage-input processor result",
+    """Full-payload producer: keyword bind, then soft is_finished."""
+    params = signature.parameters
+    required: tuple[str, ...] = ("transfer_manager", "pooling_output", "request")
+    is_finished_param = params.get("is_finished")
+    if is_finished_param is not None and is_finished_param.kind in (
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        required = required + ("is_finished",)
+    _check_producer_keyword_bind(
+        signature,
+        path=path,
+        kind=kind,
+        stage_config=stage_config,
+        required=required,
+        what="full-payload",
+    )
+    _check_is_finished(params, path=path, kind=kind, stage_config=stage_config, required=False)
+
+
+def _check_async_chunk(
+    signature: inspect.Signature,
+    *,
+    path: str,
+    kind: ProcessorKind,
+    stage_config: Any,
+) -> None:
+    """Async-chunk producer: hard is_finished, then keyword bind."""
+    params = signature.parameters
+    _check_is_finished(params, path=path, kind=kind, stage_config=stage_config, required=True)
+    _check_producer_keyword_bind(
+        signature,
+        path=path,
+        kind=kind,
+        stage_config=stage_config,
+        required=("transfer_manager", "multimodal_output", "request", "is_finished"),
+        what="async-chunk",
+    )
+
+
+def _check_legacy_multi_source(
+    _signature: inspect.Signature,
+    *,
+    path: str,
+    kind: ProcessorKind,
+    stage_config: Any,
+) -> None:
+    """Legacy multi-source processors are allowlisted to ``moss_tts.*``."""
+    if _MOSS_MULTI_SOURCE_MODULE_HINT not in _module_part(path):
+        _fail(
+            path=path,
+            kind=kind,
+            rule="legacy_multi_source_allowlist",
+            stage_config=stage_config,
+            message=f"legacy multi-source processors are allowlisted to moss_tts.*, got {path!r}",
         )
 
 
+#: Per-kind structural checks run in order by :func:`validate_processor`.
+#: ``legacy_orchestrator_builder`` is deliberately check-free: the orchestrator
+#: normalizes legacy shapes through ``wrap_orchestrator_processor``.
+_VALIDATORS: dict[ProcessorKind, tuple[Callable[..., None], ...]] = {
+    "placeholder_prompt_builder": (_check_orchestrator_first_param,),
+    "diffusion_input_builder": (_check_orchestrator_first_param,),
+    "producer_full_payload": (_check_full_payload,),
+    "producer_async_chunk": (_check_async_chunk,),
+    "legacy_multi_source": (_check_legacy_multi_source,),
+    "legacy_orchestrator_builder": (),
+}
+
+
 def validate_processor(fn: Any, *, kind: ProcessorKind, path: str, stage_config: Any = None) -> None:
-    """Structurally validate *fn* against the expected *kind*.
+    """Structurally validate *fn* against the expected *kind* (signature only).
 
-    Only ``inspect.signature`` metadata is examined; the processor body is never
-    executed.  Hard contract violations raise :class:`ProcessorValidationError`;
-    soft mismatches emit a ``RuntimeWarning``.
-
-    Args:
-        fn: The processor callable.
-        kind: The expected :class:`ProcessorKind`.
-        path: The dotted ``module.attr`` path (used for reporting).
-        stage_config: Optional config object; its ``stage_id`` is attached to
-            any raised :class:`ProcessorValidationError`.
+    Hard violations raise; soft mismatches warn; checks come from ``_VALIDATORS``.
     """
-    if not isinstance(path, str) or not path:
-        raise ValueError(f"processor path must be a non-empty dotted string, got {path!r}")
-
     try:
         signature = inspect.signature(fn)
     except (TypeError, ValueError) as exc:
@@ -511,90 +449,22 @@ def validate_processor(fn: Any, *, kind: ProcessorKind, path: str, stage_config:
             stage_config=stage_config,
             message=f"cannot inspect signature: {exc}",
         )
-        return  # unreachable
 
-    params = signature.parameters
-
-    if kind == "placeholder_prompt_builder":
-        _check_orchestrator_first_param(params, path=path, kind=kind, stage_config=stage_config)
-        _check_suffix(
-            path,
-            kind,
-            suffix_pool=(_TOKEN_ONLY_SUFFIX,),
-            stage_config=stage_config,
-            what="a *_token_only suffix",
-        )
-
-    elif kind == "diffusion_input_builder":
-        _check_orchestrator_first_param(params, path=path, kind=kind, stage_config=stage_config)
-        _check_suffix(
-            path,
-            kind,
-            suffix_pool=_DIFFUSION_SUFFIXES,
-            stage_config=stage_config,
-            what="a diffusion-builder suffix (ar2diffusion/ar2dit/thinker2imagegen/...)",
-        )
-
-    elif kind == "producer_full_payload":
-        # Bind the exact worker keyword call (transfer_manager, pooling_output,
-        # request) so a producer that only *declares* the right names but cannot
-        # accept the keyword call (wrong names / positional-only payload params)
-        # is rejected at config time; **kwargs producers are compatible.
-        required: tuple[str, ...] = ("transfer_manager", "pooling_output", "request")
-        # A keyword-acceptable is_finished must bind the worker's best-effort
-        # is_finished=True kwarg; otherwise a required one fails with TypeError.
-        is_finished_param = params.get("is_finished")
-        if is_finished_param is not None and is_finished_param.kind in (
-            inspect.Parameter.KEYWORD_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ):
-            required = required + ("is_finished",)
-        _check_producer_keyword_bind(
-            signature,
-            path=path,
-            kind=kind,
-            stage_config=stage_config,
-            required=required,
-            what="full-payload",
-        )
-        _check_full_payload_is_finished(params, path=path, kind=kind, stage_config=stage_config)
-
-    elif kind == "producer_async_chunk":
-        # ``is_finished`` is required and always passed on the async-chunk path;
-        # validate it first so its dedicated rules (is_finished_required /
-        # is_finished_positional_only) fire before the generic keyword bind.
-        _check_async_chunk_is_finished(params, path=path, kind=kind, stage_config=stage_config)
-        _check_producer_keyword_bind(
-            signature,
-            path=path,
-            kind=kind,
-            stage_config=stage_config,
-            required=("transfer_manager", "multimodal_output", "request", "is_finished"),
-            what="async-chunk",
-        )
-
-    elif kind == "legacy_multi_source":
-        if _MOSS_MULTI_SOURCE_MODULE_HINT not in _module_part(path):
-            _fail(
-                path=path,
-                kind=kind,
-                rule="legacy_multi_source_allowlist",
-                stage_config=stage_config,
-                message=f"legacy multi-source processors are allowlisted to moss_tts.*, got {path!r}",
-            )
-
-    elif kind == "legacy_orchestrator_builder":
-        # No structural contract: the orchestrator normalizes legacy positional
-        # shapes (C0/C2/C3/C4) through wrap_orchestrator_processor, and the
-        # first-parameter name is not reliable for legacy builders (configs may
-        # legitimately point at C-callables / operator builtins as test doubles).
-        # Deliberately no first-param check here.
-        pass
-
-    else:  # pragma: no cover - defensive against future literal additions
+    validators = _VALIDATORS.get(kind)
+    if validators is None:  # pragma: no cover - defensive against future literal additions
         raise ValueError(f"unknown processor kind {kind!r}")
+    for check in validators:
+        check(signature, path=path, kind=kind, stage_config=stage_config)
 
-    _check_return_annotation(signature, path=path, kind=kind)
+    # Soft return-annotation check: mismatches warn, never fail.
+    ann = signature.return_annotation
+    if ann is not inspect.Signature.empty and not isinstance(ann, str) and ann in _SCALAR_RETURN_ANNOTATIONS:
+        _warn(
+            path,
+            kind,
+            "return_annotation",
+            f"return annotation {ann!r} is a scalar, unlikely a stage-input processor result",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -608,18 +478,10 @@ def resolve_processor(
     expected_kind: ProcessorKind | None = None,
     stage_config: Any = None,
 ) -> ProcessorSpec:
-    """Resolve a dotted *path* to a validated :class:`ProcessorSpec`.
+    """Resolve *path* to a validated :class:`ProcessorSpec`.
 
     Flow: ``import_symbol`` -> ``infer_kind`` -> ``validate_processor`` ->
-    (optional) ``expected_kind`` check.  The returned ``spec.fn`` is the same
-    callable the legacy ``getattr(importlib.import_module(...), ...)`` lookup
-    produced, so callers keep identical runtime behaviour.
-
-    Args:
-        path: Dotted ``module.attr`` path of the processor.
-        expected_kind: When given, ``infer_kind`` must match; a mismatch raises
-            :class:`ProcessorValidationError` (rule ``expected_kind``).
-        stage_config: Optional config whose ``stage_id`` is attached to errors.
+    optional ``expected_kind`` check; ``spec.fn`` matches the legacy lookup.
     """
     fn = import_symbol(path)
     if not callable(fn):
@@ -630,7 +492,6 @@ def resolve_processor(
             stage_config=stage_config,
             message=f"resolved symbol is not callable: {fn!r}",
         )
-        raise AssertionError("unreachable")  # pragma: no cover
 
     kind = infer_kind(fn, path=path)
     validate_processor(fn, kind=kind, path=path, stage_config=stage_config)
@@ -643,7 +504,6 @@ def resolve_processor(
             stage_config=stage_config,
             message=f"inferred kind {kind!r} does not match expected_kind {expected_kind!r}",
         )
-        raise AssertionError("unreachable")  # pragma: no cover
 
     return ProcessorSpec(path=path, kind=kind, fn=fn)
 
@@ -661,28 +521,12 @@ def dead_processor_hint(
     has_sync: bool,
     custom_is_sync: bool = False,
 ) -> bool:
-    """Whether an orchestrator-side ``custom_process_input_func`` is never invoked.
+    """Whether an orchestrator-side custom hook is never invoked (gate three-state).
 
-    This mirrors the orchestrator gate in ``engine/orchestrator._route_output``
-    (``(not self.async_chunk or not self._stage_receives_async_chunks(stage_id + 1))``):
-
-    * ``async_chunk=True`` and the downstream stage **receives** async chunks ->
-      the orchestrator skips ``process_engine_inputs`` for that transition, so
-      the input processor may be **dead** (returns ``True``).
-    * ``async_chunk=True`` and the downstream stage does **not** receive async
-      chunks -> the transition still runs forward, so the processor is alive
-      (returns ``False``).
-    * ``async_chunk=False`` -> forward path is active; the processor is only
-      dead when a *different* ``sync_process_input_func`` overrides it
-      (``has_sync=True`` and ``custom_is_sync=False``).  When the custom hook
-      *is* the selected sync hook (``custom_is_sync=True``) it is the active
-      processor and is **not** dead.
-
-    Producer kinds are never orchestrator-side, so they are never "dead" under
-    this definition.
-
-    This is a **pure decision helper** for warnings/tests only; the orchestrator
-    does not enforce it at runtime (M0 phase is warn-first).
+    Mirrors ``engine/orchestrator._route_output``: async-chunk transitions skip
+    forward processing when the downstream stage receives chunks; otherwise a
+    differing ``sync_process_input_func`` overrides the custom hook.  Pure
+    decision helper (warn-first; the orchestrator does not enforce it).
     """
     if kind in _PRODUCER_KINDS:
         return False

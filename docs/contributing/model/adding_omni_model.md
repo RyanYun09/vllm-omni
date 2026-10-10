@@ -500,9 +500,10 @@ Create stage transition processors in `vllm_omni/model_executor/stage_input_proc
 
 A model that supports **both** `async_chunk=false` and `async_chunk=true` must
 implement all three processors for every inter-stage edge — `*_full_payload`,
-`*_async_chunk` and `*_token_only`. The `*_token_only` placeholder builder is
-required in both modes: in non-async mode it builds the forward placeholder, in
-async mode the orchestrator reuses it to prewarm the downstream stage.
+`*_async_chunk` and `*_token_only` (the `*_token_only` placeholder is required
+in both modes). See the
+[Stage Input Processor Contract](../../design/feature/async_chunk.md#stage-input-processor-contract)
+for the full contract, naming convention, and registry rules.
 
 Orchestrator-facing builders are normalized to the C1 contract
 `(source_outputs, ctx: OrchestratorInputContext)` by
@@ -556,12 +557,10 @@ def thinker2talker_async_chunk(
     ...
 ```
 
-The `OrchestratorInputContext` carried by the C1 contract has `prompt`,
-`requires_multimodal_data`, `streaming_context` and `sampling_params` (and
-deliberately has no `model_config` field). The producer-side builders
-(`*_full_payload`, `*_async_chunk`) are keyword-only and never receive an
-`OrchestratorInputContext`; `pooling_output` / `multimodal_output` are
-load-bearing keyword names of the connector data plane.
+The producer-side builders (`*_full_payload`, `*_async_chunk`) are
+keyword-only and never receive an `OrchestratorInputContext`;
+`pooling_output` / `multimodal_output` are load-bearing keyword names of the
+connector data plane.
 
 Wire these in `pipeline.py`:
 
@@ -594,19 +593,15 @@ register_processor(f"{_PROC}.thinker2talker_token_only", "placeholder_prompt_bui
 
 At startup the runtime resolves each processor through
 `resolve_processor(path, expected_kind=...)` — import -> `infer_kind` ->
-`validate_processor` -> expected-kind check — and returns a `ProcessorSpec`
-whose `fn` is the same callable a legacy `getattr(importlib.import_module(...),
-...)` lookup would produce. Hard contract violations raise
-`ProcessorValidationError`; soft mismatches (e.g. a `*_full_payload` builder
-declaring `multimodal_output` instead of `pooling_output`) emit a
-`RuntimeWarning`. New model processors should therefore match the suffix
-convention and the corresponding signature exactly.
+`validate_processor` -> expected-kind check, returning a `ProcessorSpec` whose
+`fn` matches the legacy lookup. Hard violations raise
+`ProcessorValidationError`; soft mismatches emit a `RuntimeWarning`. New model
+processors should therefore match the suffix convention and the corresponding
+signature exactly.
 
 Do **not** add a no-suffix `thinker2talker` when a `sync_process_input_func` is
 already declared — `_select_processor_funcs()` always prefers the `*_token_only`
-hook in non-async mode, so the bare function would never run. See the
-[Stage Input Processor Contract](../../design/feature/async_chunk.md#stage-input-processor-contract)
-section of the async chunk design document for the full contract.
+hook in non-async mode, so the bare function would never run.
 
 ## Testing
 
