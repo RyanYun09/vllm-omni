@@ -155,8 +155,10 @@ class StageEngineCoreClientBase(StageClientBase):
             self.async_chunk_prewarm_payload_func = getattr(metadata, "async_chunk_prewarm_payload_func", None)
             # Raw ``sync_process_input_func`` path (dead-processor hint) plus the
             # already-resolved dual-entry ``build_prewarm_placeholder`` builder.
-            self.sync_process_input_func = metadata.sync_process_input_func
-            self.prewarm_placeholder_builder = metadata.prewarm_placeholder_builder
+            # Both default to None so older metadata doubles lacking the fields
+            # (e.g. the upstream async-chunk prewarm tests) keep working.
+            self.sync_process_input_func = getattr(metadata, "sync_process_input_func", None)
+            self.prewarm_placeholder_builder = getattr(metadata, "prewarm_placeholder_builder", None)
 
         self.engine_outputs: Any = None
         self.client_addresses = dict(client_addresses or {})
