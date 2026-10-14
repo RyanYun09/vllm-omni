@@ -287,6 +287,27 @@ def _extract_last_frame_cases():
             id="voxtral-list-audio",
         ),
         pytest.param(voxtral, {"codes": {}}, None, False, id="voxtral-missing-audio"),
+        # 3-D per-step frames [B, 1, C] (Voxtral compute_mm_logits L1075):
+        # normalized via targeted squeeze(1) then the 2-D last-row semantics.
+        pytest.param(
+            voxtral,
+            _codes_audio(torch.arange(8, dtype=torch.float32).reshape(1, 1, 8)),
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            False,
+            id="voxtral-3d-per-step",
+        ),
+        # Mirror the real payload: a list whose last element is 3-D (1, 1, C).
+        pytest.param(
+            voxtral,
+            {"codes": {"audio": [torch.ones(1, 1, 4)]}},
+            [1.0, 1.0, 1.0, 1.0],
+            False,
+            id="voxtral-3d-list-element",
+        ),
+        # Non per-step 3-D layouts keep raising ValueError (dim1 != 1).
+        pytest.param(voxtral, _codes_audio(torch.zeros(1, 2, 3)), None, True, id="voxtral-3d-non-singleton-raises"),
+        # Generic 3-D (aligned with the fish/qwen3/higgs contracts).
+        pytest.param(voxtral, _codes_audio(torch.zeros(2, 2, 2)), None, True, id="voxtral-3d-generic-raises"),
     ]
 
 

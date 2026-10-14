@@ -235,7 +235,9 @@ def extract_last_codec_frame(
 
     ``key_path`` codes/audio vs audio_codes; ``validate`` None/"any"/"valid_mask";
     ``to_cpu``/``to_long`` (fish_speech).  Validity gate applies only to 2-D
-    frames; 1-D frames return directly; result is always 1-D.
+    frames; 1-D frames return directly; result is always 1-D.  3-D per-step
+    frames ``[B, 1, C]`` (Voxtral ``compute_mm_logits``) are normalized to
+    ``[B, C]`` first; any other 3-D layout still raises ``ValueError``.
     """
     if not isinstance(payload, dict):
         return None
@@ -250,6 +252,16 @@ def extract_last_codec_frame(
         audio_codes = audio_codes[-1]
     if not isinstance(audio_codes, torch.Tensor) or audio_codes.numel() == 0:
         return None
+    if audio_codes.ndim == 3 and audio_codes.shape[1] == 1:
+        # Voxtral TTS: compute_mm_logits() emits per-step [B, 1, C] codes
+        # (payload list elements of shape (1, 1, C)); the legacy voxtral
+        # helper flattened them, so 3-D per-step input is a supported
+        # layout, not a contract violation.  Targeted squeeze(1) reduces
+        # it to [B, C] so the shared 2-D last-row semantics (including
+        # any validity gate) apply unchanged.  Non-singleton frame dims
+        # (e.g. (2, 2, 2)) intentionally fall through to the ValueError
+        # below, preserving the golden-locked fish/qwen3/higgs contracts.
+        audio_codes = audio_codes.squeeze(1)
     if audio_codes.ndim == 2:
         frame: torch.Tensor = audio_codes[-1]
         if frame.numel() == 0:
