@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import janus
 import pytest
+import torch
 from vllm.outputs import CompletionOutput, RequestOutput
 from vllm.sampling_params import SamplingParams
 
@@ -613,3 +614,57 @@ def test_prewarm_prompt_len_override(builder, prewarm_len, expected_ids) -> None
     assert base_input["prompt_token_ids"] == expected_ids
     assert base_input["multi_modal_data"] is None
     assert base_input["mm_processor_kwargs"] is None
+
+
+class _DeepcopySpy:
+    """Sentinel media object that records any attempted deep-copy."""
+
+    def __init__(self) -> None:
+        self.deepcopy_calls = 0
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _DeepcopySpy:  # type: ignore[type-arg]
+        self.deepcopy_calls += 1
+        return _DeepcopySpy()
+
+
+def test_prewarm_placeholder_input_filters_discarded_media() -> None:
+    """Discarded prompt fields (media) must never be deep-copied for a prewarm."""
+    media = _DeepcopySpy()
+    orch = _prewarm_orchestrator_with_client(SimpleNamespace(prewarm_placeholder_builder=None))
+    req_state = OrchestratorRequestState(
+        request_id="req-prewarm-media",
+        prompt={
+            "prompt_token_ids": [1, 2],
+            "multi_modal_data": media,
+            "mm_processor_kwargs": {"foo": "bar"},
+        },
+        sampling_params_list=[SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    base_input = orch._build_prewarm_placeholder_input(0, "req-prewarm-media", [1, 2], req_state)
+
+    assert base_input["multi_modal_data"] is None
+    assert base_input["mm_processor_kwargs"] is None
+    assert media.deepcopy_calls == 0
+
+
+def test_prewarm_placeholder_input_shares_additional_information_tensors() -> None:
+    """``additional_information`` containers are isolated but tensors stay shared."""
+    tensor = torch.arange(4, dtype=torch.long)
+    original = {"t": tensor, "l": [1, 2]}
+    orch = _prewarm_orchestrator_with_client(SimpleNamespace(prewarm_placeholder_builder=None))
+    req_state = OrchestratorRequestState(
+        request_id="req-prewarm-additional",
+        prompt={"prompt_token_ids": [1, 2], "additional_information": original},
+        sampling_params_list=[SamplingParams(max_tokens=1)],
+        final_stage_id=0,
+    )
+
+    base_input = orch._build_prewarm_placeholder_input(0, "req-prewarm-additional", [1, 2], req_state)
+
+    copied = base_input["additional_information"]
+    assert copied is not original
+    assert copied["l"] is not original["l"]
+    assert copied["t"] is tensor
+    assert copied["t"].data_ptr() == tensor.data_ptr()

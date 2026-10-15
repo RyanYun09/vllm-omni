@@ -15,7 +15,11 @@ from vllm.v1.request import Request, RequestStatus
 from vllm.v1.utils import ConstantList
 
 from vllm_omni.data_entry_keys import MetaStruct, OmniPayloadStruct, unflatten_payload
-from vllm_omni.model_executor.stage_input_processors import resolve_processor
+from vllm_omni.model_executor.stage_input_processors import (
+    ProcessorValidationError,
+    resolve_processor,
+)
+from vllm_omni.model_executor.stage_input_processors._registry import _check_async_chunk
 
 from ..adapter import construct_next_stage_streaming_input_prompt
 from ..connectors.shm_connector import SharedMemoryConnector
@@ -29,6 +33,24 @@ from .base import OmniTransferAdapterBase
 logger = get_connector_logger(__name__)
 
 _RECLAIM_WARN_INTERVAL = 1000
+
+
+def _accepts_async_chunk_contract(fn: Callable[..., Any]) -> bool:
+    """Whether *fn* structurally matches the async-chunk producer contract."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    try:
+        _check_async_chunk(
+            signature,
+            path=getattr(fn, "__qualname__", repr(fn)),
+            kind="producer_async_chunk",
+            stage_config=None,
+        )
+    except ProcessorValidationError:
+        return False
+    return True
 
 
 class _SenderGeneration:
@@ -185,14 +207,21 @@ class OmniChunkTransferAdapter(OmniTransferAdapterBase):
         self.custom_process_next_stage_input_func: Callable[..., OmniPayloadStruct | None] | None = None
         custom_process_next_stage_input_func = getattr(model_config, "custom_process_next_stage_input_func", None)
         if custom_process_next_stage_input_func:
-            # Resolve through the registry with the async-chunk producer
-            # contract.  ``_select_processor_funcs`` already merged the
-            # async_chunk field into this path, so it must be a real
-            # ``*_async_chunk`` producer; ``is_finished`` is required (the
-            # scheduler always passes it below) — a missing/positional-only
-            # declaration is a hard configuration error (ProcessorValidationError).
-            spec = resolve_processor(custom_process_next_stage_input_func, expected_kind="producer_async_chunk")
-            self.custom_process_next_stage_input_func = spec.fn
+            # Kind inference is name-driven; accept any matching signature, reject only incompatible hooks.
+            spec = resolve_processor(custom_process_next_stage_input_func)
+            if spec.kind == "producer_async_chunk" or _accepts_async_chunk_contract(spec.fn):
+                self.custom_process_next_stage_input_func = spec.fn
+            else:
+                raise ProcessorValidationError(
+                    path=custom_process_next_stage_input_func,
+                    kind="producer_async_chunk",
+                    rule="async_chunk_contract",
+                    message=(
+                        "custom_process_next_stage_input_func does not accept the async-chunk "
+                        "producer call (requires keyword-bindable 'transfer_manager', "
+                        "'multimodal_output', 'request' and a 'is_finished' parameter)"
+                    ),
+                )
 
         # mapping for request id and chunk id
         self.put_req_chunk: dict[str, int] = defaultdict(int)

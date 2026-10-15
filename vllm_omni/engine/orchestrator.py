@@ -3258,9 +3258,20 @@ class OrchestratorBase:
 
         original_prompt = req_state.prompt
         if isinstance(original_prompt, dict):
-            import copy
+            from vllm_omni.engine.request_snapshot import copy_request_snapshot
 
-            base_input = copy.deepcopy(original_prompt)
+            # Discarded fields are skipped; additional_information tensors stay shared.
+            memo: dict[int, Any] = {}
+            base_input = copy_request_snapshot(
+                {k: v for k, v in original_prompt.items() if k not in _PREWARM_UNCOPIED_PROMPT_KEYS},
+                memo,
+            )
+            if "additional_information" in original_prompt:
+                base_input["additional_information"] = copy_request_snapshot(
+                    original_prompt["additional_information"],
+                    memo,
+                    shared_types=(torch.Tensor,),
+                )
         else:
             base_input = {}
 

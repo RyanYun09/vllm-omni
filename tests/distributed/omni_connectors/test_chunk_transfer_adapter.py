@@ -574,6 +574,7 @@ def build_adapter(monkeypatch, mocker: MockerFixture):
         flat_tts_config: bool = False,
         active_stream_window: int = 0,
         connector_extra: dict | None = None,
+        model_config_extra: dict | None = None,
     ):
         connector = mocker.MagicMock()
         connector.stage_id = stage_id
@@ -627,6 +628,7 @@ def build_adapter(monkeypatch, mocker: MockerFixture):
                 "name": "SharedMemoryConnector",
                 "extra": connector_extra or {},
             },
+            **(model_config_extra or {}),
         )
         scheduler_config = SimpleNamespace(max_num_seqs=max_num_seqs)
         adapter = OmniChunkTransferAdapter(
@@ -635,6 +637,37 @@ def build_adapter(monkeypatch, mocker: MockerFixture):
         return adapter, connector
 
     return _build
+
+
+def pack(transfer_manager, multimodal_output, request, is_finished=False):
+    """Arbitrarily named, structurally compatible async-chunk producer."""
+    del transfer_manager, multimodal_output, request, is_finished
+    return None
+
+
+def _incompatible_hook(transfer_manager, request):
+    """Structurally invalid: no ``multimodal_output`` and no ``is_finished``."""
+    del transfer_manager, request
+    return None
+
+
+def test_adapter_accepts_explicitly_configured_hook_with_arbitrary_name(build_adapter):
+    """A signature-compatible hook without a ``*_async_chunk`` suffix loads."""
+    adapter, _ = build_adapter(model_config_extra={"custom_process_next_stage_input_func": f"{__name__}.pack"})
+
+    assert adapter.custom_process_next_stage_input_func is pack
+
+
+def test_adapter_rejects_structurally_incompatible_hook(build_adapter):
+    """A hook missing required parameters fails fast instead of loading."""
+    from vllm_omni.model_executor.stage_input_processors import ProcessorValidationError
+
+    with pytest.raises(ProcessorValidationError):
+        build_adapter(
+            model_config_extra={
+                "custom_process_next_stage_input_func": f"{__name__}._incompatible_hook",
+            }
+        )
 
 
 @pytest.mark.parametrize("active_stream_window", [0, 2])
