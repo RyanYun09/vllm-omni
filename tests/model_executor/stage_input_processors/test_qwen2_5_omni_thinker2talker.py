@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Light coverage for qwen2_5_omni.thinker2talker_full_payload.
 
 Covers the finish-reason-aware stop-row trim contract: when the request
@@ -109,9 +109,7 @@ def test_none_prompt_and_output_token_ids_do_not_crash():
     hidden = torch.arange(2 * 4, dtype=torch.float32).reshape(2, 4)
 
     # No prompt and no output => target_rows == 0 => graceful None (no crash).
-    payload = thinker2talker_full_payload(
-        transfer_manager=None, pooling_output={"hidden": hidden}, request=request
-    )
+    payload = thinker2talker_full_payload(transfer_manager=None, pooling_output={"hidden": hidden}, request=request)
     assert payload is None
 
 
@@ -123,9 +121,7 @@ def test_none_output_token_ids_with_prompt_builds_payload():
     # Tuple prompt is normalised to list; 3 hidden rows match the prompt span.
     hidden = torch.arange(3 * 4, dtype=torch.float32).reshape(3, 4)
 
-    payload = thinker2talker_full_payload(
-        transfer_manager=None, pooling_output={"hidden": hidden}, request=request
-    )
+    payload = thinker2talker_full_payload(transfer_manager=None, pooling_output={"hidden": hidden}, request=request)
 
     assert payload is not None
     assert payload["ids"]["prompt"] == [1, 2, 3]
@@ -140,9 +136,7 @@ def test_none_all_token_ids_falls_back_to_prompt_plus_output():
     request = _make_request_with_raw_token_ids([1, 2], [10, 11], None)
     hidden = torch.arange(4 * 4, dtype=torch.float32).reshape(4, 4)
 
-    payload = thinker2talker_full_payload(
-        transfer_manager=None, pooling_output={"hidden": hidden}, request=request
-    )
+    payload = thinker2talker_full_payload(transfer_manager=None, pooling_output={"hidden": hidden}, request=request)
 
     assert payload is not None
     assert payload["ids"]["prompt"] == [1, 2]

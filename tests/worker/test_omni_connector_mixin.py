@@ -554,7 +554,7 @@ def pack(transfer_manager, multimodal_output, request, is_finished=False):
 def pack_full_payload(transfer_manager, multimodal_output, request, is_finished=False):
     """Name suffix says ``producer_full_payload`` while the signature follows the
     async-chunk contract (``multimodal_output``) -- the exact shape a
-    name-driven kind inference mis-classifies before the structural check.
+    name-driven kind inference misclassifies before the structural check.
     """
     del transfer_manager, multimodal_output, request, is_finished
     return None
