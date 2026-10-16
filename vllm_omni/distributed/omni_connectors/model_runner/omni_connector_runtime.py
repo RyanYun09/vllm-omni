@@ -617,16 +617,30 @@ class _OmniConnectorRuntimeMixin:
         The loader accepts both supported payload contracts: full-payload
         builders name their runner payload ``pooling_output`` while async-chunk
         builders name it ``multimodal_output`` (see
-        :meth:`_connector_payload_kwarg`).  The acceptance gate is the mixin's
-        structural validator, not the registry's name-driven kind inference, so
-        an explicitly configured, structurally compatible hook is never
-        rejected solely because of its name.
+        :meth:`_connector_payload_kwarg`).  For the configured hook the mixin's
+        structural validator (:meth:`_is_connector_payload_builder`) is the
+        authoritative acceptance gate.
+
+        Caveat: :func:`resolve_processor` runs the registry's *name-driven*
+        kind inference before that structural check, so a hook whose name ends
+        in ``_full_payload`` (for example ``pack_full_payload``) is classified
+        as a ``producer_full_payload`` builder and validated against *that*
+        contract.  If its signature actually follows a different payload
+        contract, it is rejected before :meth:`_is_connector_payload_builder`
+        ever sees it.  Such a hook is still reported at ``warning`` level (see
+        :meth:`_warn_skipped_hook`) rather than silently dropped, and can be
+        pinned to the intended kind via
+        ``stage_input_processors.register_processor(path, "producer_async_chunk")``.
         """
-        candidates: list[str] = []
+        # Each candidate carries an ``is_explicit`` flag: hooks named in config
+        # are escalated to ``warning`` when skipped (dropping one disables the
+        # stage's connector payload transfer), while auto-derived probe
+        # candidates stay at ``debug`` to avoid noise from the normal scan.
+        candidates: list[tuple[str, bool]] = []
 
         next_stage_func = getattr(model_config, "custom_process_next_stage_input_func", None)
         if isinstance(next_stage_func, str) and next_stage_func:
-            candidates.append(next_stage_func)
+            candidates.append((next_stage_func, True))
 
         if not getattr(model_config, "async_chunk", False):
             input_func = getattr(model_config, "custom_process_input_func", None)
@@ -634,16 +648,16 @@ class _OmniConnectorRuntimeMixin:
                 try:
                     module_path, func_name = input_func.rsplit(".", 1)
                     if func_name.endswith("_full_payload") or func_name.endswith("_batch"):
-                        candidates.append(f"{module_path}.{func_name}")
+                        candidates.append((f"{module_path}.{func_name}", False))
                     else:
-                        candidates.append(f"{module_path}.{func_name}_full_payload")
-                        candidates.append(f"{module_path}.{func_name}_batch")
-                        candidates.append(input_func)
+                        candidates.append((f"{module_path}.{func_name}_full_payload", False))
+                        candidates.append((f"{module_path}.{func_name}_batch", False))
+                        candidates.append((input_func, False))
                 except ValueError:
-                    candidates.append(input_func)
+                    candidates.append((input_func, False))
 
         tried: set[str] = set()
-        for func_path in candidates:
+        for func_path, is_explicit in candidates:
             if func_path in tried:
                 continue
             tried.add(func_path)
@@ -654,24 +668,46 @@ class _OmniConnectorRuntimeMixin:
                 # authoritative acceptance gate.
                 spec = resolve_processor(func_path)
                 if not cls._is_connector_payload_builder(spec.fn):
-                    logger.debug(
-                        "Skipping incompatible connector payload hook %s; signature=%s",
-                        func_path,
-                        inspect.signature(spec.fn),
-                    )
+                    try:
+                        detail: Any = inspect.signature(spec.fn)
+                    except (TypeError, ValueError):
+                        detail = "signature unavailable"
+                    cls._warn_skipped_hook(func_path, is_explicit, detail)
                     continue
                 return spec.path, spec.fn
             except ProcessorValidationError as exc:
-                logger.debug(
-                    "Skipping incompatible connector payload hook %s: %s",
-                    func_path,
-                    exc,
-                )
+                # A name-driven kind inference can pick the wrong contract
+                # (e.g. ``pack_full_payload`` -> ``producer_full_payload``)
+                # before the structural payload check ever runs.
+                cls._warn_skipped_hook(func_path, is_explicit, exc)
                 continue
             except Exception:
                 logger.warning("Failed to load custom func: %s", func_path, exc_info=True)
 
         return None, None
+
+    @classmethod
+    def _warn_skipped_hook(cls, func_path: str, is_explicit: bool, detail: Any) -> None:
+        """Report a connector payload hook that was skipped during the scan.
+
+        Auto-derived probe candidates (``*_full_payload`` / ``*_batch``) are
+        logged at ``debug`` because a missing sibling is the expected case.
+        An *explicitly* configured hook is escalated to ``warning`` since
+        silently dropping it disables connector payload transfer for the
+        stage; the message names the ``register_processor`` escape hatch so a
+        deliberately named hook can be pinned to the correct kind.
+        """
+        if is_explicit:
+            logger.warning(
+                "Skipping explicitly configured connector payload hook %s: %s. "
+                "If this hook is structurally valid, pin its kind via "
+                "stage_input_processors.register_processor(%r, 'producer_async_chunk').",
+                func_path,
+                detail,
+                func_path,
+            )
+        else:
+            logger.debug("Skipping incompatible connector payload hook %s: %s", func_path, detail)
 
     @classmethod
     def _is_connector_payload_builder(cls, func: Any) -> bool:

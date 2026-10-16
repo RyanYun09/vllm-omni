@@ -551,6 +551,15 @@ def pack(transfer_manager, multimodal_output, request, is_finished=False):
     return None
 
 
+def pack_full_payload(transfer_manager, multimodal_output, request, is_finished=False):
+    """Name suffix says ``producer_full_payload`` while the signature follows the
+    async-chunk contract (``multimodal_output``) -- the exact shape a
+    name-driven kind inference mis-classifies before the structural check.
+    """
+    del transfer_manager, multimodal_output, request, is_finished
+    return None
+
+
 class TestLoadCustomFuncSelection(unittest.TestCase):
     def test_uses_validator_override_from_public_mixin(self):
         config = SimpleNamespace(
@@ -564,6 +573,43 @@ class TestLoadCustomFuncSelection(unittest.TestCase):
         validator.assert_called_once_with(_make_request)
         assert selected_path is None
         assert func is None
+
+    def test_warns_when_explicit_hook_is_skipped(self):
+        """linyueqian #4290791761: an explicitly configured hook that is dropped
+        (here: rejected before the structural check) is escalated to a
+        ``warning`` naming the ``register_processor`` escape hatch, instead of
+        vanishing into a ``debug``-only line.
+        """
+        config = SimpleNamespace(
+            async_chunk=True,
+            custom_process_next_stage_input_func=f"{__name__}.pack_full_payload",
+        )
+
+        with patch.object(omni_connector_runtime.logger, "warning") as warn:
+            selected_path, func = MixinHost._load_custom_func(config)
+
+        assert selected_path is None
+        assert func is None
+        warn.assert_called_once()
+        message = warn.call_args.args[0]
+        assert "explicitly configured connector payload hook" in message
+        assert "register_processor" in message
+
+    def test_auto_derived_probe_candidates_stay_at_debug(self):
+        """Auto-derived ``*_full_payload`` / ``*_batch`` probes are the expected
+        misses of the scan and must not spam ``warning`` when the sibling
+        builder does not exist.
+        """
+        config = SimpleNamespace(
+            async_chunk=False,
+            custom_process_next_stage_input_func=None,
+            custom_process_input_func="vllm_omni.model_executor.stage_input_processors.mimo_audio.llm2code2wav",
+        )
+
+        with patch.object(omni_connector_runtime.logger, "warning") as warn:
+            MixinHost._load_custom_func(config)
+
+        warn.assert_not_called()
 
     def test_skips_non_payload_stage_input_processors_for_full_payload_mode(self):
         incompatible_paths = [

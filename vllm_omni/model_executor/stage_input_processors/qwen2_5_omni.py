@@ -245,9 +245,13 @@ def thinker2talker_full_payload(
         )
         return None
 
-    prompt_token_ids = _common.ensure_list_unchanged(getattr(request, "prompt_token_ids", None))
-    output_token_ids = _common.ensure_list_unchanged(getattr(request, "output_token_ids", None))
-    all_token_ids = _common.ensure_list_unchanged(getattr(request, "all_token_ids", None) or [])
+    # Use ``ensure_list`` (``None`` -> ``[]``), not ``ensure_list_unchanged``
+    # (``None`` -> ``None``): the downstream arithmetic below indexes and
+    # takes ``len(...)`` of these lists, so a ``None`` would raise instead of
+    # degrading gracefully.  This matches the pre-refactor behaviour.
+    prompt_token_ids = _common.ensure_list(getattr(request, "prompt_token_ids", None))
+    output_token_ids = _common.ensure_list(getattr(request, "output_token_ids", None))
+    all_token_ids = _common.ensure_list(getattr(request, "all_token_ids", None))
     if not all_token_ids:
         all_token_ids = list(prompt_token_ids) + list(output_token_ids)
 
